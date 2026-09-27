@@ -1,0 +1,34 @@
+[package]
+name = "agents-live"
+version = "0.1.0"
+edition = "2021"
+description = "Read-only terminal dashboard for live Codex and Claude Code sessions and their subagents"
+license = "MIT"
+repository = "https://github.com/oikawas/agents-live"
+readme = "../README.md"
+keywords = ["codex", "claude-code", "dashboard", "terminal", "agents"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "agents-live"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+crossterm = "0.27"
+unicode-width = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+libc = "0.2"
+regex = "1"
+once_cell = "1"
+ctrlc = "3"
+memchr = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 2

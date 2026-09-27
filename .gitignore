@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Rust build artifacts
+rust/target/
+
+# Local-only material kept out of the repository: the development journal
+# (SPEC.md), personal notes and screenshots
+no-git-sync/
