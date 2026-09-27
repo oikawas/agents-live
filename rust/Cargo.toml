@@ -1,6 +1,6 @@
 [package]
 name = "agents-live"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Read-only terminal dashboard for live Codex and Claude Code sessions and their subagents"
 license = "MIT"

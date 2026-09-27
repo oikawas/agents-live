@@ -24,7 +24,7 @@ q / Esc / Ctrl-C to stop
 
 ## Features
 
-- **Codex and Claude Code on one screen.** Sessions are grouped by process (PID), with subagents listed as child rows under the main thread. You can also show just Claude Code or just Codex.
+- **Codex and Claude Code on one screen.** Rows are grouped by session, with subagents listed as child rows under the main thread. You can also show just Claude Code or just Codex.
 - **Tracks subagents and background work.** For Claude Code, this covers `Agent` / `Task` subagents and `Bash` commands started with `run_in_background` or moved to the background after a timeout; each stays `RUN` until it finishes.
 - **Remaining weekly and 5-hour limits**, and the time elapsed since the weekly reset.
 - **30-day token count and an API-equivalent cost estimate.** Treat it as a just-for-fun reference figure.
@@ -132,6 +132,7 @@ When every visible session is idle and every subagent has finished, the top line
 | `--all-idle-banner on\|off` | Show the all-idle banner | `on` |
 | `--all-idle-bgcolor COLOR` | Banner background (black / red / green / yellow / blue / magenta / cyan / white) | `blue` |
 | `--all-idle-red-screen` | When all sessions are idle, fill the screen with the banner color | |
+| `--version`, `-V` | Print the version | |
 
 ## Claude weekly and 5-hour limits (optional)
 
@@ -167,6 +168,8 @@ The token count and dollar figure on each summary line are an **API-equivalent e
 `agents-live` only reads local files; it never changes Codex or Claude Code state.
 
 - **Codex**: finds the locks held by running Codex processes with `lsof`, reads thread metadata from `~/.codex/state_5.sqlite`, and reads only the newly appended part of each thread's rollout (JSONL).
+  - Since Codex 0.157, a single daemon (`codex app-server`) holds the locks of every session, so rows are split by session (root thread), with `app-server <PID>` in the header.
+  - A session whose terminal has been closed keeps showing as `IDLE` for as long as the daemon holds its thread, because Codex does not record which terminal is attached to which session.
 - **Claude Code**: reads live sessions and their status from `~/.claude/sessions/<pid>.json`, keeping only sessions whose process is alive. Only the `busy` status counts as `RUN`. Model, token, and subagent details come from the transcripts (JSONL) under `~/.claude/projects/`, again reading only what was appended.
 - The 30-day totals are refreshed in the background at most once every 60 seconds, rereading only files whose size or inode changed. They are kept in memory only and never written to disk.
 
@@ -181,6 +184,10 @@ cargo run -- --once        # print one snapshot
 ```
 
 The Japanese README ([README.ja.md](README.ja.md)) is the source document; this English README is a translation of it.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## Disclaimer
 

@@ -30,6 +30,9 @@ pub struct Dashboard {
     claude_usage_tracker: ThirtyDayUsageTracker,
     claude_trackers: HashMap<String, ClaudeSessionState>,
     claude_path_cache: HashMap<String, String>,
+    /// Codex lock-holder pids that are the app-server daemon rather than a
+    /// session's own process (Codex 0.157+), memoized per pid.
+    codex_daemon_pids: HashMap<i64, bool>,
     pub error: Option<String>,
     color: bool,
     palette: Palette,
@@ -65,6 +68,7 @@ impl Dashboard {
             claude_usage_tracker,
             claude_trackers: HashMap::new(),
             claude_path_cache: HashMap::new(),
+            codex_daemon_pids: HashMap::new(),
             error: None,
             color,
             palette,
@@ -112,6 +116,15 @@ impl Dashboard {
             let (held, lock_error) = held_thread_ids(&self.lock_dir);
             if let Some(err) = lock_error {
                 errors.push(err);
+            }
+            let live_pids: std::collections::HashSet<i64> = held.values().copied().collect();
+            self.codex_daemon_pids.retain(|pid, _| live_pids.contains(pid));
+            let unknown: Vec<i64> = live_pids.iter().copied().filter(|p| !self.codex_daemon_pids.contains_key(p)).collect();
+            if !unknown.is_empty() {
+                let kinds = codex_app_server_pids(&unknown);
+                for pid in unknown {
+                    self.codex_daemon_pids.insert(pid, kinds.contains(&pid));
+                }
             }
             let codex_threads = match load_threads(&self.db_path, &held) {
                 Ok(t) => {
@@ -642,12 +655,29 @@ impl Dashboard {
             return self.all_idle_red_screen(&output, show_all_idle_banner, height, width);
         }
 
-        let mut by_pid: Vec<((String, i64), Vec<&Thread>)> = Vec::new();
+        // One block per session: a process and the root thread it runs. A
+        // Codex CLI process holds one root, but the Codex app-server daemon
+        // holds every session's threads under its own pid.
+        let parents: HashMap<&str, Option<&str>> =
+            threads.iter().map(|t| (t.id.as_str(), t.parent_id.as_deref())).collect();
+        let root_of = |thread: &Thread| -> String {
+            let mut current = thread.id.as_str();
+            let mut steps = 0;
+            while let Some(Some(parent)) = parents.get(current) {
+                if !parents.contains_key(parent) || steps > 64 {
+                    break;
+                }
+                current = parent;
+                steps += 1;
+            }
+            current.to_string()
+        };
+        let mut by_pid: Vec<(GroupKey, Vec<&Thread>)> = Vec::new();
         {
-            let mut map: HashMap<(String, i64), Vec<&Thread>> = HashMap::new();
-            let mut order: Vec<(String, i64)> = Vec::new();
+            let mut map: HashMap<GroupKey, Vec<&Thread>> = HashMap::new();
+            let mut order: Vec<GroupKey> = Vec::new();
             for thread in &visible {
-                let key = (thread.origin.clone(), thread.pid);
+                let key = (thread.origin.clone(), thread.pid, root_of(thread));
                 if !map.contains_key(&key) {
                     order.push(key.clone());
                 }
@@ -662,7 +692,7 @@ impl Dashboard {
 
         let compact_groups = self.args.compact_groups == "on";
         let mut current_origin: Option<String> = None;
-        for (group_index, ((origin, pid), group)) in by_pid.iter().enumerate() {
+        for (group_index, ((origin, pid, _root), group)) in by_pid.iter().enumerate() {
             if current_origin.as_deref() != Some(origin.as_str()) {
                 if current_origin.is_some() && !compact_groups {
                     lines.push(String::new());
@@ -688,7 +718,15 @@ impl Dashboard {
                 .collect();
             let group_running = group.iter().filter(|t| states[&t.id].phase == "run").count();
             let source_tag = if *origin == "claude" { "CLAUDE" } else { "CODEX" };
-            let group_title = format!("{}  PID {}  {}  {}  {} running", source_tag, pid, project, root_id, group_running);
+            let process_label = if *origin == "codex" && self.codex_daemon_pids.get(pid) == Some(&true) {
+                "app-server"
+            } else {
+                "PID"
+            };
+            let group_title = format!(
+                "{}  {} {}  {}  {}  {} running",
+                source_tag, process_label, pid, project, root_id, group_running
+            );
             lines.push(self.painted(&format!("\u{256D}\u{2500} {}", fit(&group_title, width - 3, false)), "border", origin));
 
             let ordered = order_group(group);
@@ -906,8 +944,8 @@ impl Dashboard {
         result.join("\n")
     }
 
-    fn group_sort_key(&self, key: &(String, i64), group: &[&Thread]) -> (i64, String, i64, String, i64) {
-        let (origin, pid) = key;
+    fn group_sort_key(&self, key: &GroupKey, group: &[&Thread]) -> (i64, String, i64, String, i64) {
+        let (origin, pid, _root) = key;
         let origin_rank: i64 = if self.args.group_order == "claude-first" {
             if origin == "claude" { 0 } else { 1 }
         } else if origin == "codex" {
@@ -969,6 +1007,34 @@ fn claude_status_is_running(status: Option<&str>) -> bool {
 fn display_width_bound<F: Fn(&Thread) -> String>(group: &[&Thread], f: F, min: i64, max: i64) -> i64 {
     let widest = group.iter().map(|t| display_width(&f(t)) as i64).max().unwrap_or(min);
     widest.max(min).min(max)
+}
+
+/// A display block: (origin, lock-holder pid, root thread id).
+type GroupKey = (String, i64, String);
+
+/// Which of `pids` are the Codex app-server daemon (`codex app-server`),
+/// judged from `ps` since lsof reports only the command name "codex".
+fn codex_app_server_pids(pids: &[i64]) -> std::collections::HashSet<i64> {
+    let list = pids.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(",");
+    let output = match std::process::Command::new("ps").args(["-o", "pid=,command=", "-p", &list]).output() {
+        Ok(o) => o,
+        Err(_) => return Default::default(),
+    };
+    parse_app_server_pids(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_app_server_pids(ps_output: &str) -> std::collections::HashSet<i64> {
+    ps_output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            let (pid, command) = line.split_once(char::is_whitespace)?;
+            // ".../bin/codex app-server --listen ...": match on the pair so a
+            // path with spaces cannot shift the words.
+            let is_daemon = command.starts_with("codex app-server") || command.contains("/codex app-server");
+            if is_daemon { pid.parse().ok() } else { None }
+        })
+        .collect()
 }
 
 fn order_group(group: &[&Thread]) -> Vec<Thread> {
@@ -1837,6 +1903,63 @@ mod tests {
         assert!(output.contains("CODEX  Weekly --  --B $--   1 running \u{00B7} 1 subagents \u{00B7} 2 processes"));
         assert!(output.contains("CLAUDE  Weekly --  5h --  --B $--   1 running \u{00B7} 0 subagents \u{00B7} 1 processes"));
         assert!(!output.lines().next().unwrap().contains("running"));
+    }
+
+    #[test]
+    fn app_server_daemon_pids_are_recognized_from_ps_output() {
+        let ps = "1001 /Users/me/.codex/packages/app-server-daemon/releases/0.157.1/bin/codex app-server --listen unix:// --managed-daemon
+1002 codex resume
+  701 /Applications/My Tools/bin/codex app-server --listen unix://
+1003 codex";
+        let daemons = parse_app_server_pids(ps);
+        assert_eq!(daemons, [1001, 701].into_iter().collect());
+    }
+
+    #[test]
+    fn sessions_held_by_the_app_server_daemon_get_their_own_blocks() {
+        // Codex 0.157+: one daemon pid holds every session's threads.
+        let mut a = row_thread("a-main", "Session A");
+        let mut a_child = row_thread("a-child", "child_task_a");
+        let mut b = row_thread("b-main", "Session B");
+        let mut b_child = row_thread("b-child", "child_task_b");
+        let mut b_grandchild = row_thread("b-grandchild", "grandchild_task_b");
+        for t in [&mut a, &mut a_child, &mut b, &mut b_child, &mut b_grandchild] {
+            t.pid = 1001;
+        }
+        b.created_at_ms = a.created_at_ms + 1000;
+        a_child.kind = "spawn".to_string();
+        a_child.parent_id = Some("a-main".to_string());
+        a_child.depth = 1;
+        b_child.kind = "spawn".to_string();
+        b_child.parent_id = Some("b-main".to_string());
+        b_child.depth = 1;
+        b_grandchild.kind = "spawn".to_string();
+        b_grandchild.parent_id = Some("b-child".to_string());
+        b_grandchild.depth = 2;
+        let threads = vec![a, a_child, b, b_child, b_grandchild];
+        let mut states = HashMap::new();
+        for t in &threads {
+            states.insert(t.id.clone(), row_state("run"));
+        }
+        // b-child finished and is hidden: its running grandchild must still
+        // land in b's block, not become a block of its own
+        states.insert("b-child".to_string(), row_state("done"));
+
+        let mut dashboard = Dashboard::new(parse_args(&["--color", "never", "--claude", "off", "--hide-done"]));
+        dashboard.codex_daemon_pids.insert(1001, true);
+        let output = dashboard.render_sized(&threads, &states, 140, 40);
+        let headers: Vec<&str> = output.lines().filter(|l| l.starts_with("\u{256D}")).collect();
+        assert_eq!(2, headers.len(), "{}", output);
+        assert!(headers[0].contains("app-server 1001") && headers[0].contains("a-main"), "{}", headers[0]);
+        assert!(headers[1].contains("app-server 1001") && headers[1].contains("b-main"), "{}", headers[1]);
+        assert!(headers[0].contains("2 running") && headers[1].contains("2 running"), "{}", output);
+        let b_block = &output[output.find(headers[1]).unwrap()..];
+        assert!(b_block.contains("grandchild_task_b") && !b_block.contains("child_task_a"), "{}", output);
+
+        // an ordinary CLI process keeps the plain "PID" label
+        dashboard.codex_daemon_pids.insert(1001, false);
+        let output = dashboard.render_sized(&threads, &states, 140, 40);
+        assert!(output.contains("PID 1001") && !output.contains("app-server"), "{}", output);
     }
 
     #[test]

@@ -21,6 +21,7 @@ fn dirs_home() -> String {
 
 #[derive(Parser, Debug, Clone)]
 #[command(
+    version,
     about = "Continuously show live Codex and Claude Code main and subagent status.",
     disable_help_flag = false
 )]
