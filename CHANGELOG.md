@@ -4,6 +4,16 @@ English | [日本語](CHANGELOG.ja.md)
 
 User-facing changes, by version. Run `agents-live --version` to see which version you have.
 
+## 0.2.1 (2026-09-27)
+
+### Fixed
+
+- In 0.2.0, the subagents a Codex session left behind after its main thread ended were each shown as a separate group. They are now shown together as one group.
+
+### Known issues
+
+- The Codex 0.157 daemon (`codex app-server`) sometimes keeps a session's main thread or subagents after its terminal has been closed. Until it lets go, the ended session keeps showing as `IDLE` or `DONE`. This is on the Codex side, so we are waiting for a Codex fix.
+
 ## 0.2.0 (2026-09-27)
 
 ### Changed

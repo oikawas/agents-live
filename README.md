@@ -169,7 +169,7 @@ The token count and dollar figure on each summary line are an **API-equivalent e
 
 - **Codex**: finds the locks held by running Codex processes with `lsof`, reads thread metadata from `~/.codex/state_5.sqlite`, and reads only the newly appended part of each thread's rollout (JSONL).
   - Since Codex 0.157, a single daemon (`codex app-server`) holds the locks of every session, so rows are split by session (root thread), with `app-server <PID>` in the header.
-  - A session whose terminal has been closed keeps showing as `IDLE` for as long as the daemon holds its thread, because Codex does not record which terminal is attached to which session.
+  - The Codex 0.157 daemon sometimes keeps a session's threads after its terminal has been closed. Until it lets go, the ended session keeps showing as `IDLE` or `DONE`. This is on the Codex side, and we are waiting for a Codex fix.
 - **Claude Code**: reads live sessions and their status from `~/.claude/sessions/<pid>.json`, keeping only sessions whose process is alive. Only the `busy` status counts as `RUN`. Model, token, and subagent details come from the transcripts (JSONL) under `~/.claude/projects/`, again reading only what was appended.
 - The 30-day totals are refreshed in the background at most once every 60 seconds, rereading only files whose size or inode changed. They are kept in memory only and never written to disk.
 

@@ -660,15 +660,17 @@ impl Dashboard {
         // holds every session's threads under its own pid.
         let parents: HashMap<&str, Option<&str>> =
             threads.iter().map(|t| (t.id.as_str(), t.parent_id.as_deref())).collect();
+        // A parent the daemon no longer holds still names the session: its
+        // leftover children stay together under that parent's id.
         let root_of = |thread: &Thread| -> String {
             let mut current = thread.id.as_str();
             let mut steps = 0;
             while let Some(Some(parent)) = parents.get(current) {
+                current = parent;
+                steps += 1;
                 if !parents.contains_key(parent) || steps > 64 {
                     break;
                 }
-                current = parent;
-                steps += 1;
             }
             current.to_string()
         };
@@ -692,7 +694,7 @@ impl Dashboard {
 
         let compact_groups = self.args.compact_groups == "on";
         let mut current_origin: Option<String> = None;
-        for (group_index, ((origin, pid, _root), group)) in by_pid.iter().enumerate() {
+        for (group_index, ((origin, pid, root), group)) in by_pid.iter().enumerate() {
             if current_origin.as_deref() != Some(origin.as_str()) {
                 if current_origin.is_some() && !compact_groups {
                     lines.push(String::new());
@@ -709,13 +711,7 @@ impl Dashboard {
                 .filter(|t| t.parent_id.is_none() || !group_ids.contains(t.parent_id.as_deref().unwrap_or("")))
                 .collect();
             let project = roots.first().map(|t| t.project()).unwrap_or_else(|| group[0].project());
-            let root_id: String = roots
-                .first()
-                .map(|t| t.id.clone())
-                .unwrap_or_else(|| group[0].id.clone())
-                .chars()
-                .take(8)
-                .collect();
+            let root_id: String = root.chars().take(8).collect();
             let group_running = group.iter().filter(|t| states[&t.id].phase == "run").count();
             let source_tag = if *origin == "claude" { "CLAUDE" } else { "CODEX" };
             let process_label = if *origin == "codex" && self.codex_daemon_pids.get(pid) == Some(&true) {
@@ -1955,6 +1951,14 @@ mod tests {
         assert!(headers[0].contains("2 running") && headers[1].contains("2 running"), "{}", output);
         let b_block = &output[output.find(headers[1]).unwrap()..];
         assert!(b_block.contains("grandchild_task_b") && !b_block.contains("child_task_a"), "{}", output);
+
+        // b-main is released while its children are still held: they stay
+        // one block, headed by the parent's id
+        let leftovers: Vec<Thread> = threads.iter().filter(|t| t.id != "b-main").cloned().collect();
+        let output = dashboard.render_sized(&leftovers, &states, 140, 40);
+        let headers: Vec<&str> = output.lines().filter(|l| l.starts_with("\u{256D}")).collect();
+        assert_eq!(2, headers.len(), "{}", output);
+        assert!(headers.iter().any(|h| h.contains("b-main") && h.contains("1 running")), "{}", output);
 
         // an ordinary CLI process keeps the plain "PID" label
         dashboard.codex_daemon_pids.insert(1001, false);
