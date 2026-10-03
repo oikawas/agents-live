@@ -41,6 +41,7 @@ pub fn codex_model_pricing(model: &str) -> Option<(f64, f64, f64)> {
     let model = if model == "gpt-5.6" { "gpt-5.6-sol" } else { model };
     match model {
         "gpt-6-astra" => Some((10.00, 1.00, 50.00)),
+        "gpt-6.1-sol" => Some((2.00, 0.10, 10.00)),
         "gpt-6-sol" => Some((2.00, 0.20, 10.00)),
         "gpt-6-luna" => Some((0.10, 0.01, 0.50)),
         "gpt-5.6-sol" => Some((4.00, 0.40, 20.00)),
@@ -66,16 +67,28 @@ pub fn codex_model_pricing(model: &str) -> Option<(f64, f64, f64)> {
 /// and 0.025x on Fable 5.1. As with Codex, a model absent here drops out of
 /// both the displayed token count and the cost -- claude-opus-5-5 was
 /// missing and ~80% of 30-day usage vanished that way.
+///
+/// A dated snapshot id such as "claude-haiku-4-5-20251001" is the same model
+/// at the same price as its alias, so the date is dropped before matching.
 pub fn claude_model_pricing(model: &str) -> Option<(f64, f64, f64)> {
-    match model {
+    match strip_snapshot_date(model) {
         "claude-fable-5-1" | "claude-mythos-5-1" => Some((10.00, 0.25, 50.00)),
         "claude-fable-5" | "claude-mythos-5" => Some((10.00, 1.00, 50.00)),
         "claude-opus-5-5" => Some((4.00, 0.20, 20.00)),
         "claude-opus-5" | "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" => Some((5.00, 0.50, 25.00)),
-        "claude-sonnet-5" => Some((2.00, 0.20, 10.00)),
+        "claude-sonnet-5-5" | "claude-sonnet-5" => Some((2.00, 0.20, 10.00)),
         "claude-sonnet-4-6" => Some((3.00, 0.30, 15.00)),
         "claude-haiku-4-5" => Some((1.00, 0.10, 5.00)),
         _ => None,
+    }
+}
+
+/// "claude-haiku-4-5-20251001" -> "claude-haiku-4-5": a trailing
+/// "-YYYYMMDD" is a snapshot date, not part of the model's name.
+fn strip_snapshot_date(model: &str) -> &str {
+    match model.rsplit_once('-') {
+        Some((name, date)) if date.len() == 8 && date.bytes().all(|b| b.is_ascii_digit()) => name,
+        _ => model,
     }
 }
 
@@ -747,6 +760,8 @@ mod tests {
         for (model, expected) in [
             ("gpt-6-astra", (10.00, 1.00, 50.00)),
             // found by the "+?" flag the day it shipped
+            // cached input is half of gpt-6-sol's; the rest is the same
+            ("gpt-6.1-sol", (2.00, 0.10, 10.00)),
             ("gpt-6-sol", (2.00, 0.20, 10.00)),
             ("gpt-6-luna", (0.10, 0.01, 0.50)),
             ("gpt-5.6-sol", (4.00, 0.40, 20.00)),
@@ -775,12 +790,18 @@ mod tests {
         for (model, expected) in [
             ("claude-opus-5-5", (4.00, 0.20, 20.00)),
             ("claude-opus-5", (5.00, 0.50, 25.00)),
+            ("claude-sonnet-5-5", (2.00, 0.20, 10.00)),
             ("claude-sonnet-5", (2.00, 0.20, 10.00)),
             ("claude-fable-5-1", (10.00, 0.25, 50.00)),
             ("claude-haiku-4-5", (1.00, 0.10, 5.00)),
+            // Claude Code records Haiku by its dated snapshot id
+            ("claude-haiku-4-5-20251001", (1.00, 0.10, 5.00)),
         ] {
             assert_eq!(Some(expected), claude_model_pricing(model), "{}", model);
         }
+        // only an 8-digit date is dropped, so version numbers survive
+        assert_eq!(None, claude_model_pricing("claude-sonnet-5-55"));
+        assert_eq!(None, claude_model_pricing("claude-next-20251001"));
         // Claude Code's placeholder for locally generated turns carries
         // no real usage.
         assert_eq!(None, claude_model_pricing("<synthetic>"));

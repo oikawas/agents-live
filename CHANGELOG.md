@@ -4,6 +4,14 @@ English | [日本語](CHANGELOG.ja.md)
 
 User-facing changes, by version. Run `agents-live --version` to see which version you have.
 
+## 0.2.2 (2026-10-03)
+
+### Fixed
+
+- Added the rate for Codex's new model `gpt-6.1-sol`. It had no rate, so its usage was missing from the 30-day token count and cost, and the cost carried a `+?`.
+- Added the rate for Claude's new model `claude-sonnet-5-5` (Sonnet 5.5).
+- Claude Code records Haiku 4.5 under its dated name (`claude-haiku-4-5-20251001`), so Haiku usage was missing from the 30-day token count and cost. Dated names now count as the same model.
+
 ## 0.2.1 (2026-09-27)
 
 ### Fixed
