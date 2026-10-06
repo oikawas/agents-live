@@ -4,6 +4,12 @@ English | [日本語](CHANGELOG.ja.md)
 
 User-facing changes, by version. Run `agents-live --version` to see which version you have.
 
+## 0.2.3 (unreleased)
+
+### Fixed
+
+- A Claude subagent could stay RUN after it had finished. Claude Code occasionally records a subagent's completion notice without the ID this tool matched on; such notices now mark it DONE too.
+
 ## 0.2.2 (2026-10-03)
 
 ### Fixed

@@ -7,13 +7,14 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::time::SystemTime;
 
-/// Matches each <task-notification>...<tool-use-id>ID</tool-use-id>...</task-notification>
-/// block delivered in a "queued_command" attachment when a background
-/// Agent/Task subagent actually finishes.
-static TASK_NOTIFICATION_TOOL_USE_ID_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?s)<task-notification>.*?<tool-use-id>([^<]+)</tool-use-id>.*?</task-notification>")
-        .unwrap()
-});
+/// Matches each <task-notification>...</task-notification> block delivered
+/// in a "queued_command" attachment when a background Agent/Task subagent
+/// actually finishes.
+static TASK_NOTIFICATION_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?s)<task-notification>(.*?)</task-notification>").unwrap());
+static NOTIFICATION_TOOL_USE_ID_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"<tool-use-id>([^<]+)</tool-use-id>").unwrap());
+static NOTIFICATION_TASK_ID_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<task-id>([^<]+)</task-id>").unwrap());
 
 /// The task id a launch receipt hands out -- "... in background with ID:
 /// b6oe7ee7f." for a Bash, "agentId: a481062ae6ff9f937" for an agent, "...
@@ -251,9 +252,23 @@ impl ClaudeSessionState {
         if !text.contains("<task-notification>") {
             return;
         }
-        for cap in TASK_NOTIFICATION_TOOL_USE_ID_RE.captures_iter(text) {
-            let tool_use_id = cap[1].trim();
-            if let Some(info) = self.agents.get_mut(tool_use_id) {
+        for cap in TASK_NOTIFICATION_RE.captures_iter(text) {
+            let body = &cap[1];
+            // Some notices carry only the task id (seen for agents that hand
+            // their report back by message); a Monitor event has a task id
+            // too but no status, and is not an ending.
+            let tool_use_id = match NOTIFICATION_TOOL_USE_ID_RE.captures(body) {
+                Some(id) => id[1].trim().to_string(),
+                None if body.contains("<status>") => {
+                    let task_id = NOTIFICATION_TASK_ID_RE.captures(body).map(|id| id[1].trim().to_string());
+                    match task_id.and_then(|id| self.task_tool_ids.get(&id).cloned()) {
+                        Some(id) => id,
+                        None => continue,
+                    }
+                }
+                None => continue,
+            };
+            if let Some(info) = self.agents.get_mut(&tool_use_id) {
                 if info.done_at.is_none() {
                     info.done_at = Some(event_at);
                 }
@@ -539,6 +554,33 @@ mod tests {
             "message": {"role": "user", "content": "<task-notification>\n<task-id>abc</task-id>\n<tool-use-id>tool-9</tool-use-id>\n<status>completed</status>\n</task-notification>"}
         }));
         assert!(state.agents["tool-9"].done_at.is_some());
+    }
+
+    #[test]
+    fn handback_notification_without_tool_use_id_completes_the_agent() {
+        // Seen in real data since 2.1.214, rarely: a completion notice with
+        // only the task id. A Monitor event also has a task id but no status,
+        // and must not end anything.
+        let mut state = ClaudeSessionState::new("dummy.jsonl".to_string());
+        state.consume(&tool_use_event("tool-5", "Agent", "2026-01-01T00:00:00Z"));
+        state.consume(&json!({
+            "type": "user",
+            "timestamp": "2026-01-01T00:00:03Z",
+            "message": {"content": [{"type": "tool_result", "tool_use_id": "tool-5",
+                "content": [{"type": "text", "text": "Async agent launched successfully.\nagentId: ad02b5941635c24a2 (internal ID)"}]}]}
+        }));
+        state.consume(&json!({
+            "type": "user",
+            "timestamp": "2026-01-01T00:02:00Z",
+            "message": {"role": "user", "content": "<task-notification>\n<task-id>ad02b5941635c24a2</task-id>\n<summary>Monitor event: \"x\"</summary>\n<event>y</event>\n</task-notification>"}
+        }));
+        assert!(state.agents["tool-5"].done_at.is_none());
+        state.consume(&json!({
+            "type": "user",
+            "timestamp": "2026-01-01T00:05:00Z",
+            "message": {"role": "user", "content": "<task-notification>\n<task-id>ad02b5941635c24a2</task-id>\n<status>completed</status>\n<summary>Agent \"x\" finished</summary>\n</task-notification>"}
+        }));
+        assert!(state.agents["tool-5"].done_at.is_some());
     }
 
     #[test]
