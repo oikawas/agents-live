@@ -4,7 +4,7 @@ English | [日本語](CHANGELOG.ja.md)
 
 User-facing changes, by version. Run `agents-live --version` to see which version you have.
 
-## 0.2.3 (unreleased)
+## 0.2.3 (2026-10-20)
 
 ### Fixed
 
