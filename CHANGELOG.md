@@ -9,6 +9,9 @@ User-facing changes, by version. Run `agents-live --version` to see which versio
 ### Fixed
 
 - A Claude subagent could stay RUN after it had finished. Claude Code occasionally records a subagent's completion notice without the ID this tool matched on; such notices now mark it DONE too.
+- Added the rate for Claude's new model `claude-haiku-5-5` (Haiku 5.5). It had no rate, so its usage was missing from the 30-day token count and cost. Haiku 5.5 charges 5x for a request whose prompt is over 100K tokens, and that is now applied.
+- Fixed the cache-read rate of `claude-sonnet-5-5` to $0.10/MTok (0.05x input); it was computed at $0.20.
+- Added rates for `claude-opus-4-5` and `claude-sonnet-4-5`.
 
 ## 0.2.2 (2026-10-03)
 

@@ -64,7 +64,8 @@ pub fn codex_model_pricing(model: &str) -> Option<(f64, f64, f64)> {
 /// (input, cache read, output) USD per 1M tokens, from Anthropic's
 /// first-party API pricing. The cache-read rate is listed per model rather
 /// than derived from input: it is 0.1x on most models but 0.05x on Opus 5.5
-/// and 0.025x on Fable 5.1. As with Codex, a model absent here drops out of
+/// and Sonnet 5.5 and 0.025x on Fable 5.1. Haiku 5.5's rates here are for
+/// prompts up to 100K tokens; see `claude_long_prompt_multiplier`. As with Codex, a model absent here drops out of
 /// both the displayed token count and the cost -- claude-opus-5-5 was
 /// missing and ~80% of 30-day usage vanished that way.
 ///
@@ -75,9 +76,13 @@ pub fn claude_model_pricing(model: &str) -> Option<(f64, f64, f64)> {
         "claude-fable-5-1" | "claude-mythos-5-1" => Some((10.00, 0.25, 50.00)),
         "claude-fable-5" | "claude-mythos-5" => Some((10.00, 1.00, 50.00)),
         "claude-opus-5-5" => Some((4.00, 0.20, 20.00)),
-        "claude-opus-5" | "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" => Some((5.00, 0.50, 25.00)),
-        "claude-sonnet-5-5" | "claude-sonnet-5" => Some((2.00, 0.20, 10.00)),
-        "claude-sonnet-4-6" => Some((3.00, 0.30, 15.00)),
+        "claude-opus-5" | "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" | "claude-opus-4-5" => {
+            Some((5.00, 0.50, 25.00))
+        }
+        "claude-sonnet-5-5" => Some((2.00, 0.10, 10.00)),
+        "claude-sonnet-5" => Some((2.00, 0.20, 10.00)),
+        "claude-sonnet-4-6" | "claude-sonnet-4-5" => Some((3.00, 0.30, 15.00)),
+        "claude-haiku-5-5" => Some((0.10, 0.01, 0.50)),
         "claude-haiku-4-5" => Some((1.00, 0.10, 5.00)),
         _ => None,
     }
@@ -89,6 +94,19 @@ fn strip_snapshot_date(model: &str) -> &str {
     match model.rsplit_once('-') {
         Some((name, date)) if date.len() == 8 && date.bytes().all(|b| b.is_ascii_digit()) => name,
         _ => model,
+    }
+}
+
+/// Haiku 5.5 prices a request whose prompt (input plus cache reads and
+/// writes) is over 100K tokens at 5x every rate, cache hits included. Every
+/// other current model bills its full context window at standard rates.
+pub const CLAUDE_HAIKU_5_5_LONG_PROMPT_TOKENS: i64 = 100_000;
+
+fn claude_long_prompt_multiplier(model: &str, prompt_tokens: i64) -> f64 {
+    if strip_snapshot_date(model) == "claude-haiku-5-5" && prompt_tokens > CLAUDE_HAIKU_5_5_LONG_PROMPT_TOKENS {
+        5.0
+    } else {
+        1.0
     }
 }
 
@@ -422,7 +440,8 @@ pub fn claude_usage_total_tokens(usage: &serde_json::Value) -> i64 {
 }
 
 pub fn claude_api_equivalent_cost(model: Option<&str>, usage: &serde_json::Value) -> Option<f64> {
-    let (input_rate, cache_read_rate, output_rate) = claude_model_pricing(model?)?;
+    let model = model?;
+    let (input_rate, cache_read_rate, output_rate) = claude_model_pricing(model)?;
     let nonneg = |key: &str| -> i64 {
         usage.get(key).and_then(|v| v.as_i64()).filter(|v| *v > 0).unwrap_or(0)
     };
@@ -456,7 +475,8 @@ pub fn claude_api_equivalent_cost(model: Option<&str>, usage: &serde_json::Value
         + write_1h as f64 * input_rate * CLAUDE_CACHE_WRITE_1H_MULTIPLIER
         + write_5m as f64 * input_rate * CLAUDE_CACHE_WRITE_5M_MULTIPLIER
         + output_tokens as f64 * output_rate;
-    Some(cost / 1_000_000.0)
+    let prompt_tokens = input_tokens + cache_read + write_1h + write_5m;
+    Some(cost * claude_long_prompt_multiplier(model, prompt_tokens) / 1_000_000.0)
 }
 
 /// One hour's worth of aggregated 30-day usage for a single rollout/
@@ -790,9 +810,12 @@ mod tests {
         for (model, expected) in [
             ("claude-opus-5-5", (4.00, 0.20, 20.00)),
             ("claude-opus-5", (5.00, 0.50, 25.00)),
-            ("claude-sonnet-5-5", (2.00, 0.20, 10.00)),
+            ("claude-sonnet-5-5", (2.00, 0.10, 10.00)),
             ("claude-sonnet-5", (2.00, 0.20, 10.00)),
             ("claude-fable-5-1", (10.00, 0.25, 50.00)),
+            ("claude-haiku-5-5", (0.10, 0.01, 0.50)),
+            ("claude-opus-4-8", (5.00, 0.50, 25.00)),
+            ("claude-fable-5", (10.00, 1.00, 50.00)),
             ("claude-haiku-4-5", (1.00, 0.10, 5.00)),
             // Claude Code records Haiku by its dated snapshot id
             ("claude-haiku-4-5-20251001", (1.00, 0.10, 5.00)),
@@ -822,6 +845,29 @@ mod tests {
         let cost = claude_api_equivalent_cost(Some("claude-fable-5-1"), &usage).unwrap();
         assert!((cost - (10.0 + 2.5 + 12.5 + 20.0 + 50.0)).abs() < 1e-9, "{}", cost);
         assert!(claude_api_equivalent_cost(Some("claude-next"), &usage).is_none());
+    }
+
+    #[test]
+    fn haiku_5_5_prompts_over_100k_tokens_pay_5x_every_rate() {
+        // 60K input + 40K cache read = exactly 100K: still the base rates
+        let at_limit = serde_json::json!({
+            "input_tokens": 60_000, "cache_read_input_tokens": 40_000, "output_tokens": 10_000
+        });
+        let base = (60_000.0 * 0.10 + 40_000.0 * 0.01 + 10_000.0 * 0.50) / 1_000_000.0;
+        let cost = claude_api_equivalent_cost(Some("claude-haiku-5-5"), &at_limit).unwrap();
+        assert!((cost - base).abs() < 1e-12, "{}", cost);
+        // one cache-write token more pushes the whole request over
+        let over = serde_json::json!({
+            "input_tokens": 60_000, "cache_read_input_tokens": 40_000, "output_tokens": 10_000,
+            "cache_creation": {"ephemeral_5m_input_tokens": 1, "ephemeral_1h_input_tokens": 0}
+        });
+        let expected = 5.0 * (base + 0.10 * 1.25 / 1_000_000.0);
+        let cost = claude_api_equivalent_cost(Some("claude-haiku-5-5"), &over).unwrap();
+        assert!((cost - expected).abs() < 1e-12, "{}", cost);
+        // other models bill the full context window at standard rates
+        let big = serde_json::json!({"input_tokens": 500_000, "output_tokens": 0});
+        let cost = claude_api_equivalent_cost(Some("claude-sonnet-5-5"), &big).unwrap();
+        assert!((cost - 1.0).abs() < 1e-12, "{}", cost);
     }
 
     #[test]
