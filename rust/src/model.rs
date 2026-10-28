@@ -42,6 +42,7 @@ pub fn codex_model_pricing(model: &str) -> Option<(f64, f64, f64)> {
     match model {
         "gpt-6-astra" => Some((10.00, 1.00, 50.00)),
         "gpt-6.1-sol" => Some((2.00, 0.10, 10.00)),
+        "gpt-6.1-terra" => Some((1.00, 0.05, 5.00)),
         "gpt-6-sol" => Some((2.00, 0.20, 10.00)),
         "gpt-6-luna" => Some((0.10, 0.01, 0.50)),
         "gpt-5.6-sol" => Some((4.00, 0.40, 20.00)),
@@ -782,6 +783,7 @@ mod tests {
             // found by the "+?" flag the day it shipped
             // cached input is half of gpt-6-sol's; the rest is the same
             ("gpt-6.1-sol", (2.00, 0.10, 10.00)),
+            ("gpt-6.1-terra", (1.00, 0.05, 5.00)),
             ("gpt-6-sol", (2.00, 0.20, 10.00)),
             ("gpt-6-luna", (0.10, 0.01, 0.50)),
             ("gpt-5.6-sol", (4.00, 0.40, 20.00)),

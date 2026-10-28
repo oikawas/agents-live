@@ -4,6 +4,12 @@ English | [日本語](CHANGELOG.ja.md)
 
 User-facing changes, by version. Run `agents-live --version` to see which version you have.
 
+## 0.2.4 (2026-10-29)
+
+### Fixed
+
+- Added the rate for Codex's new model `gpt-6.1-terra`. It had no rate, so its usage was missing from the 30-day token count and cost, and the cost carried a `+?`.
+
 ## 0.2.3 (2026-10-20)
 
 ### Fixed
