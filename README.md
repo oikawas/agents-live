@@ -78,6 +78,7 @@ CLAUDE  Weekly 94%  5h 88%  1.2B $512   1 running · 1 subagents · 1 processes
 | `Weekly nn%` | Remaining weekly limit |
 | `5h nn%` | Remaining 5-hour limit. Always shown for Claude; shown for Codex only when a 5-hour window is reported |
 | `8.2B $4,321` | 30-day token count and estimated cost (see below) |
+| `cr $57` | What you actually paid in Codex credits over the last 30 days (see below). Shown only when a credit balance is reported |
 | `running` / `subagents` / `processes` | Running rows, subagents, and processes |
 
 Codex and Claude figures are computed separately and never combined.
@@ -161,6 +162,7 @@ The token count and dollar figure on each summary line are an **API-equivalent e
 - Claude Code uses Anthropic's standard API rates (input, per-model cache read, cache write, and output), including subagent transcripts.
 - Tool-call fees and service-tier price differences are not included.
 - Tokens from models missing from the pricing table are left out of both the token count and the cost. When such tokens make up 1% or more of the last 30 days, the cost gets a `+?` suffix (for example, `$1,838+?`). A newly released model needs an entry in the pricing table (`rust/src/model.rs`).
+- When Codex credits (purchased beyond your plan's limits) are in use, the cost is followed by the last 30 days' credit spend, as in `cr $57`. It is worked out from the credit balance recorded in your session records, adding back any rise from a purchase, and converted at 25 credits = $1, the rate commonly cited from OpenAI's Codex rate card; it is provisional, as it could not be checked against the official page. Claude's extra usage is not covered, since nothing about it is recorded locally.
 - Right after startup, the figures read `--B $--` until the first scan completes. `--once` waits for the scan before printing.
 
 ## How it works

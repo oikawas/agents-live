@@ -286,6 +286,39 @@ pub fn weekly_reset_elapsed_label(resets_at: Option<f64>, now: f64) -> String {
     format!("{}d{:02}h{:02}m", days, hours, minutes)
 }
 
+/// Codex credits bought per USD on individual (Plus/Pro) plans. PROVISIONAL:
+/// OpenAI's Codex rate card (help.openai.com/articles/20001106) could not be
+/// fetched, so this is the "25 credits = $1" that third-party copies of it
+/// list; it matches the API rates (gpt-5.5 input $5 = 125 credits / 1M).
+pub const CODEX_CREDITS_PER_USD: f64 = 25.0;
+/// A rise in the credit balance at least this large is a purchase. Smaller
+/// rises are concurrent sessions reporting a balance a few seconds stale.
+pub const CODEX_CREDIT_PURCHASE_MIN: f64 = 100.0;
+
+/// Credits spent across (timestamp, balance) samples of the account-wide
+/// Codex credit balance: first minus last plus whatever was bought in
+/// between. Summing every drop would also count the stale-sample jitter.
+pub fn codex_credit_spend(samples: &mut [(f64, f64)]) -> Option<f64> {
+    samples.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let first = samples.first()?.1;
+    let last = samples.last()?.1;
+    let purchases: f64 = samples
+        .windows(2)
+        .map(|w| w[1].1 - w[0].1)
+        .filter(|rise| *rise >= CODEX_CREDIT_PURCHASE_MIN)
+        .sum();
+    Some((first - last + purchases).max(0.0))
+}
+
+/// " cr $57": what the 30-day credit spend actually cost, shown beside the
+/// API-equivalent figure; empty when no credit balance was reported.
+pub fn credit_spend_label(credit_spend_usd: Option<f64>) -> String {
+    match credit_spend_usd {
+        None => String::new(),
+        Some(usd) => format!(" cr {}", estimated_cost_label(Some(usd))),
+    }
+}
+
 pub fn estimated_cost_label(cost_usd: Option<f64>) -> String {
     match cost_usd {
         None => "$--".to_string(),
@@ -514,6 +547,9 @@ pub struct UsageTotals {
     pub cost_usd: f64,
 }
 
+/// One reading of the Codex credit balance: (timestamp, balance).
+pub type CreditSample = (f64, f64);
+
 #[derive(Debug, Clone, Default)]
 #[allow(dead_code)]
 pub struct ThirtyDayUsage {
@@ -521,6 +557,9 @@ pub struct ThirtyDayUsage {
     pub priced_tokens: i64,
     pub unpriced_tokens: i64,
     pub cost_usd: f64,
+    /// USD actually spent from purchased credits over the window; None when
+    /// the source reports no credit balance.
+    pub credit_spend_usd: Option<f64>,
     pub sampled_at: f64,
 }
 
@@ -803,6 +842,35 @@ mod tests {
         // Absent from the pricing tables and left unpriced on purpose.
         assert_eq!(None, codex_model_pricing("gpt-5.3-codex-spark"));
         assert_eq!(None, codex_model_pricing("some-model-openai-ships-next"));
+    }
+
+    #[test]
+    fn codex_credit_spend_counts_purchases_and_ignores_stale_jitter() {
+        // Real shape: two sessions interleave readings a few seconds apart,
+        // so the merged timeline wobbles up by a credit or two; a purchase
+        // of 5,000 lands in the middle.
+        let mut samples = vec![
+            (10.0, 1_000.0),
+            (20.0, 990.0),
+            (21.0, 992.0), // stale reading from another session
+            (22.0, 985.0),
+            (30.0, 5_985.0), // bought 5,000
+            (40.0, 5_900.0),
+        ];
+        let spent = codex_credit_spend(&mut samples).unwrap();
+        assert!((spent - 100.0).abs() < 1e-9, "{}", spent);
+        // order of arrival does not matter
+        let mut shuffled = vec![(40.0, 5_900.0), (10.0, 1_000.0), (30.0, 5_985.0), (22.0, 985.0)];
+        assert!((codex_credit_spend(&mut shuffled).unwrap() - 100.0).abs() < 1e-9);
+        assert_eq!(None, codex_credit_spend(&mut []));
+        assert_eq!(Some(0.0), codex_credit_spend(&mut [(1.0, 50.0)]));
+    }
+
+    #[test]
+    fn credit_spend_label_is_shown_only_when_a_balance_was_reported() {
+        assert_eq!("", credit_spend_label(None));
+        assert_eq!(" cr $57", credit_spend_label(Some(1_425.0 / CODEX_CREDITS_PER_USD)));
+        assert_eq!(" cr $1,250", credit_spend_label(Some(1_250.0)));
     }
 
     #[test]

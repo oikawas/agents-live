@@ -4,6 +4,12 @@ English | [日本語](CHANGELOG.ja.md)
 
 User-facing changes, by version. Run `agents-live --version` to see which version you have.
 
+## 0.3.0 (2026-11-01)
+
+### Added
+
+- When Codex credits are in use, the summary line now shows the last 30 days' credit spend after the cost, as in `cr $57`. It is worked out from the credit balance in your session records and converted at 25 credits = $1 (a provisional rate).
+
 ## 0.2.4 (2026-10-29)
 
 ### Fixed

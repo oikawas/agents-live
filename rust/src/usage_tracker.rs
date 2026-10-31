@@ -3,7 +3,9 @@
 //! `ThirtyDayUsageTracker` in the Python script; Codex and Claude Code each
 //! provide the source-specific pieces via `UsageSource`.
 
-use crate::model::{ThirtyDayUsage, UsageTotals, USAGE_WINDOW_SECONDS};
+use crate::model::{
+    codex_credit_spend, CreditSample, ThirtyDayUsage, UsageTotals, CODEX_CREDITS_PER_USD, USAGE_WINDOW_SECONDS,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -18,6 +20,10 @@ pub trait FileState: Send {
     fn refresh(&mut self, cutoff: f64);
     /// Sum of this file's retained (post-cutoff-eviction) usage buckets.
     fn totals(&self) -> UsageTotals;
+    /// Credit-balance readings within the window (Codex only).
+    fn credit_samples(&self) -> &[CreditSample] {
+        &[]
+    }
 }
 
 /// Enumerates (source_id, path, default_model) rows to track and builds new
@@ -131,7 +137,11 @@ impl ThirtyDayUsageTracker {
         let mut priced_tokens = 0i64;
         let mut unpriced_tokens = 0i64;
         let mut cost_usd = 0.0f64;
+        // The balance is account-wide, so readings from every file are merged
+        // into one timeline before measuring how far it fell.
+        let mut credit_samples: Vec<CreditSample> = Vec::new();
         for state in local_states.values() {
+            credit_samples.extend_from_slice(state.credit_samples());
             let totals = state.totals();
             total_tokens += totals.total_tokens;
             priced_tokens += totals.priced_tokens;
@@ -143,6 +153,7 @@ impl ThirtyDayUsageTracker {
             priced_tokens,
             unpriced_tokens,
             cost_usd,
+            credit_spend_usd: codex_credit_spend(&mut credit_samples).map(|credits| credits / CODEX_CREDITS_PER_USD),
             sampled_at: now,
         };
 
@@ -155,6 +166,10 @@ impl ThirtyDayUsageTracker {
 
     pub fn cost_usd(&self) -> Option<f64> {
         self.inner.lock().unwrap().summary.as_ref().map(|s| s.cost_usd)
+    }
+
+    pub fn credit_spend_usd(&self) -> Option<f64> {
+        self.inner.lock().unwrap().summary.as_ref().and_then(|s| s.credit_spend_usd)
     }
 
     pub fn priced_tokens(&self) -> Option<i64> {

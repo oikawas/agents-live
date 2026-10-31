@@ -386,9 +386,9 @@ impl Dashboard {
         }
     }
 
-    fn usage_for(&self, origin: &str) -> (Option<i64>, Option<f64>, Option<i64>) {
+    fn usage_for(&self, origin: &str) -> (Option<i64>, Option<f64>, Option<i64>, Option<f64>) {
         let tracker = if origin == "claude" { &self.claude_usage_tracker } else { &self.usage_tracker };
-        (tracker.priced_tokens(), tracker.cost_usd(), tracker.unpriced_tokens())
+        (tracker.priced_tokens(), tracker.cost_usd(), tracker.unpriced_tokens(), tracker.credit_spend_usd())
     }
 
     fn source_counts(visible: &[&Thread], states: &HashMap<String, AgentRowState>, origin: &str) -> (i64, i64, i64) {
@@ -501,12 +501,13 @@ impl Dashboard {
     ) -> String {
         let source_tag = if origin == "claude" { "CLAUDE" } else { "CODEX" };
         let weekly_used_percent = Self::latest_weekly_percent(visible, states, origin);
-        let (priced_tokens, priced_cost, unpriced_tokens) = self.usage_for(origin);
+        let (priced_tokens, priced_cost, unpriced_tokens, credit_spend) = self.usage_for(origin);
         let tokens_label = billions_token_label(priced_tokens);
         let cost_label = format!(
-            "{}{}",
+            "{}{}{}",
             estimated_cost_label(priced_cost),
-            unpriced_marker(priced_tokens, unpriced_tokens)
+            unpriced_marker(priced_tokens, unpriced_tokens),
+            credit_spend_label(credit_spend)
         );
         let (running, child_count, process_count) = Self::source_counts(visible, states, origin);
         let counts = format!("{} running \u{b7} {} subagents \u{b7} {} processes", running, child_count, process_count);

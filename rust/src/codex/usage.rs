@@ -1,6 +1,6 @@
 use crate::codex::db::list_usage_sources;
 use crate::model::{
-    api_equivalent_cost, parse_timestamp, usage_bucket_key, TokenUsage, UsageBucket, UsageTotals,
+    api_equivalent_cost, parse_timestamp, usage_bucket_key, CreditSample, TokenUsage, UsageBucket, UsageTotals,
     READ_CHUNK_SIZE,
 };
 use crate::usage_tracker::{FileState, UsageSource};
@@ -33,6 +33,7 @@ pub struct CodexUsageFileState {
     current_model: Option<String>,
     previous_total: Option<TokenUsage>,
     buckets: HashMap<i64, UsageBucket>,
+    credit_samples: Vec<CreditSample>,
 }
 
 impl CodexUsageFileState {
@@ -46,6 +47,7 @@ impl CodexUsageFileState {
             current_model: None,
             previous_total: None,
             buckets: HashMap::new(),
+            credit_samples: Vec::new(),
         }
     }
 
@@ -83,6 +85,12 @@ impl CodexUsageFileState {
         if payload.get("type").and_then(|v| v.as_str()) != Some("token_count") {
             return;
         }
+        let event_at = parse_timestamp(event.get("timestamp").and_then(|v| v.as_str()));
+        if let (Some(at), Some(balance)) = (event_at, credit_balance(payload)) {
+            if at >= cutoff {
+                self.credit_samples.push((at, balance));
+            }
+        }
         let info = match payload.get("info").and_then(|v| v.as_object()) {
             Some(i) => i,
             None => return,
@@ -105,7 +113,6 @@ impl CodexUsageFileState {
             Some(u) if u.total_tokens > 0 => u,
             _ => return,
         };
-        let event_at = parse_timestamp(event.get("timestamp").and_then(|v| v.as_str()));
         let event_at = match event_at {
             Some(t) if t >= cutoff => t,
             _ => return,
@@ -142,6 +149,7 @@ impl FileState for CodexUsageFileState {
             self.current_model = None;
             self.previous_total = None;
             self.buckets.clear();
+            self.credit_samples.clear();
         }
         if size > self.offset {
             if let Ok(mut file) = File::open(&self.path) {
@@ -164,6 +172,12 @@ impl FileState for CodexUsageFileState {
         let cutoff_bucket = usage_bucket_key(cutoff);
         self.buckets.retain(|&key, _| key >= cutoff_bucket);
         self.buckets.shrink_to_fit();
+        self.credit_samples.retain(|&(at, _)| at >= cutoff);
+        self.credit_samples.shrink_to_fit();
+    }
+
+    fn credit_samples(&self) -> &[CreditSample] {
+        &self.credit_samples
     }
 
     fn totals(&self) -> UsageTotals {
@@ -187,6 +201,23 @@ impl CodexUsageFileState {
         for line in lines {
             self.consume_line(&line, cutoff);
         }
+    }
+}
+
+/// The purchased-credit balance a token_count's rate_limits carries, e.g.
+/// `"credits":{"has_credits":true,"unlimited":false,"balance":"1234.56"}`.
+/// Unlimited or creditless accounts report nothing to spend down.
+fn credit_balance(payload: &serde_json::Map<String, Value>) -> Option<f64> {
+    let credits = payload.get("rate_limits")?.get("credits")?;
+    if credits.get("has_credits").and_then(|v| v.as_bool()) != Some(true)
+        || credits.get("unlimited").and_then(|v| v.as_bool()) == Some(true)
+    {
+        return None;
+    }
+    match credits.get("balance")? {
+        Value::String(s) => s.parse().ok(),
+        Value::Number(n) => n.as_f64(),
+        _ => None,
     }
 }
 
@@ -216,4 +247,33 @@ fn inode_of(metadata: &std::fs::Metadata) -> u64 {
 #[cfg(not(unix))]
 fn inode_of(_metadata: &std::fs::Metadata) -> u64 {
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn token_count(ts: &str, credits: &str) -> String {
+        format!(
+            r#"{{"timestamp":"{}","type":"event_msg","payload":{{"type":"token_count","info":null,"rate_limits":{{"limit_id":"codex","credits":{}}}}}}}"#,
+            ts, credits
+        )
+    }
+
+    #[test]
+    fn credit_balance_readings_are_collected_from_token_counts() {
+        let mut state = CodexUsageFileState::new("x.jsonl".to_string(), None);
+        let cutoff = parse_timestamp(Some("2026-10-01T00:00:00Z")).unwrap();
+        let lines = [
+            token_count("2026-09-30T00:00:00Z", r#"{"has_credits":true,"unlimited":false,"balance":"500.0"}"#),
+            token_count("2026-10-02T00:00:00Z", r#"{"has_credits":true,"unlimited":false,"balance":"1234.5600000000"}"#),
+            token_count("2026-10-03T00:00:00Z", r#"{"has_credits":false,"unlimited":false,"balance":"0"}"#),
+            token_count("2026-10-04T00:00:00Z", r#"{"has_credits":true,"unlimited":true,"balance":null}"#),
+            token_count("2026-10-05T00:00:00Z", "null"),
+        ];
+        state.feed_chunk(format!("{}\n", lines.join("\n")).as_bytes(), cutoff);
+        // only the in-window reading of a spendable balance counts
+        assert_eq!(1, state.credit_samples.len());
+        assert!((state.credit_samples[0].1 - 1_234.56).abs() < 1e-6);
+    }
 }
