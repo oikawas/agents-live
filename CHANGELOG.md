@@ -4,6 +4,12 @@ English | [日本語](CHANGELOG.ja.md)
 
 User-facing changes, by version. Run `agents-live --version` to see which version you have.
 
+## 0.3.1 (2026-11-17)
+
+### Fixed
+
+- Added the rate for Claude's new model `claude-fable-5-2` (Fable 5.2). It had no rate, so its usage was missing from the 30-day token count and cost, and the cost carried a `+?`.
+
 ## 0.3.0 (2026-11-01)
 
 ### Added

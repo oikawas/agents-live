@@ -65,7 +65,7 @@ pub fn codex_model_pricing(model: &str) -> Option<(f64, f64, f64)> {
 /// (input, cache read, output) USD per 1M tokens, from Anthropic's
 /// first-party API pricing. The cache-read rate is listed per model rather
 /// than derived from input: it is 0.1x on most models but 0.05x on Opus 5.5
-/// and Sonnet 5.5 and 0.025x on Fable 5.1. Haiku 5.5's rates here are for
+/// and Sonnet 5.5 and 0.025x on Fable 5.1 and 5.2. Haiku 5.5's rates here are for
 /// prompts up to 100K tokens; see `claude_long_prompt_multiplier`. As with Codex, a model absent here drops out of
 /// both the displayed token count and the cost -- claude-opus-5-5 was
 /// missing and ~80% of 30-day usage vanished that way.
@@ -74,6 +74,7 @@ pub fn codex_model_pricing(model: &str) -> Option<(f64, f64, f64)> {
 /// at the same price as its alias, so the date is dropped before matching.
 pub fn claude_model_pricing(model: &str) -> Option<(f64, f64, f64)> {
     match strip_snapshot_date(model) {
+        "claude-fable-5-2" | "claude-mythos-5-2" => Some((8.00, 0.20, 40.00)),
         "claude-fable-5-1" | "claude-mythos-5-1" => Some((10.00, 0.25, 50.00)),
         "claude-fable-5" | "claude-mythos-5" => Some((10.00, 1.00, 50.00)),
         "claude-opus-5-5" => Some((4.00, 0.20, 20.00)),
@@ -883,6 +884,7 @@ mod tests {
             ("claude-sonnet-5-5", (2.00, 0.10, 10.00)),
             ("claude-sonnet-5", (2.00, 0.20, 10.00)),
             ("claude-fable-5-1", (10.00, 0.25, 50.00)),
+            ("claude-fable-5-2", (8.00, 0.20, 40.00)),
             ("claude-haiku-5-5", (0.10, 0.01, 0.50)),
             ("claude-opus-4-8", (5.00, 0.50, 25.00)),
             ("claude-fable-5", (10.00, 1.00, 50.00)),
