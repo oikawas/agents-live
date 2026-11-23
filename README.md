@@ -66,7 +66,7 @@ Press `q`, `Esc`, or `Ctrl-C` to quit (no Enter needed). When the terminal is to
 
 ### Top line
 
-Shows the clock and, for each source (Codex / Claude), the time elapsed since its weekly limit last reset (`DdHHhMMm`). A source whose reset time is not known yet shows `-d--h--m`. The sources appear in the same order as the groups (`--group-order`). This line is white in every theme.
+Shows the clock and, for each source (Codex / Claude / Antigravity), the time elapsed since its weekly limit last reset (`DdHHhMMm`). A source whose reset time is not known yet shows `-d--h--m`. The sources appear in the same order as the groups (`--group-order`). This line is white in every theme.
 
 ### Per-source summary line
 
@@ -80,14 +80,14 @@ CLAUDE  Weekly 94%  5h 88%  1.2B $512   1 running · 1 subagents · 1 processes
 | Field | Meaning |
 |---|---|
 | `Weekly nn%` | Remaining weekly limit |
-| `5h nn%` | Remaining 5-hour limit. Always shown for Claude; shown for Codex only when a 5-hour window is reported |
+| `5h nn%` | Remaining 5-hour limit. Always shown for Claude and Antigravity; shown for Codex only when a 5-hour window is reported |
 | `8.2B $4,321` | 30-day token count and estimated cost (see below) |
 | `cr $57` | What you actually paid in Codex credits over the last 30 days (see below). Shown only when a credit balance is reported |
 | `running` / `subagents` / `processes` | Running rows, subagents, and processes |
 
 Each source's figures are computed separately and never combined.
 
-The Antigravity summary line reads `ANTIGRAVITY  0.6B $15   …`, with no `Weekly` or `5h`: Antigravity records nothing about its usage limits locally. For the same reason, the top line shows no reset time for Antigravity.
+Antigravity's `Weekly` and `5h` show whichever of its buckets (Gemini, other models (`3p`), and so on) has the least left. Showing them needs the setup described below.
 
 When the remaining weekly limit is 95% or more, the summary line turns green to signal that the limit has just reset. Below 5%, the figure alone is highlighted in red.
 
@@ -160,7 +160,23 @@ It edits the `statusLine` setting in `~/.claude/settings.json` so that `agents-l
 - The setting records where the `agents-live` you ran is installed. If you reinstall it somewhere else, run the command again.
 - `agents-live install-statusline --uninstall` restores your original status-line setting.
 
-This optional step is the only thing in this project that edits a configuration file. It never runs automatically.
+## Antigravity weekly and 5-hour limits (optional)
+
+The Antigravity CLI, too, writes its remaining usage limits to no local file and only passes them on stdin to the status-line command. Without the setup below, Antigravity's figures read `Weekly --` and `5h --`.
+
+To show them, run this once:
+
+```sh
+agents-live install-statusline --antigravity
+```
+
+It edits the `statusLine` setting in `~/.gemini/antigravity-cli/settings.json` so that the same `agents-live statusline` runs. The limit figures are saved per conversation under `~/.gemini/antigravity-cli/agents-live-statusline-cache/`.
+
+- If a status-line command was set before, it still runs with the same input. If not, `stack_with_default` is turned on so Antigravity's built-in status line stays.
+- The backup, running it again, and reinstalling elsewhere work as for Claude.
+- `agents-live install-statusline --antigravity --uninstall` restores your original setting.
+
+These optional steps are the only things in this project that edit a configuration file. They never run automatically.
 
 ## 30-day tokens and estimated cost
 

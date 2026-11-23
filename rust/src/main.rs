@@ -91,20 +91,27 @@ fn run_subcommand(args: &cli::Args, command: &cli::Subcommand) -> i32 {
             let _ = std::io::Read::read_to_end(&mut std::io::stdin(), &mut stdin);
             statusline::run_hook(
                 &claude_home,
+                &args.antigravity_home_path(),
                 original_command.as_deref().unwrap_or(""),
                 &stdin,
                 &mut std::io::stdout(),
                 &mut std::io::stderr(),
             )
         }
-        cli::Subcommand::InstallStatusline { uninstall } => {
-            let result = if *uninstall {
-                statusline::uninstall(&claude_home)
-            } else {
-                match std::env::current_exe() {
+        cli::Subcommand::InstallStatusline { uninstall, antigravity } => {
+            let antigravity_home = args.antigravity_home_path();
+            let result = match (*uninstall, *antigravity) {
+                (true, false) => statusline::uninstall(&claude_home),
+                (true, true) => statusline::uninstall_antigravity(&antigravity_home),
+                (false, _) => match std::env::current_exe() {
+                    Ok(exe) if *antigravity => statusline::install_antigravity(
+                        &antigravity_home,
+                        &exe,
+                        args.explicit_antigravity_home().as_deref(),
+                    ),
                     Ok(exe) => statusline::install(&claude_home, &exe, args.explicit_claude_home().as_deref()),
                     Err(e) => Err(format!("cannot locate the agents-live executable: {}", e)),
-                }
+                },
             };
             match result {
                 Ok(messages) => {

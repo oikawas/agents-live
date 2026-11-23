@@ -47,7 +47,7 @@ pub struct Args {
     pub claude: String,
 
     /// Antigravity CLI data directory
-    #[arg(long, default_value_t = default_antigravity_home())]
+    #[arg(long, global = true, default_value_t = default_antigravity_home())]
     pub antigravity_home: String,
 
     /// show or hide Antigravity CLI conversations and the agents they start
@@ -125,16 +125,21 @@ pub struct Args {
 /// Without a subcommand, agents-live runs the dashboard.
 #[derive(clap::Subcommand, Debug, Clone)]
 pub enum Subcommand {
-    /// Hook Claude Code's statusLine so the dashboard can show Claude's
-    /// weekly and 5-hour limits (use --uninstall to undo)
+    /// Hook Claude Code's statusLine (or, with --antigravity, the Antigravity
+    /// CLI's) so the dashboard can show its weekly and 5-hour limits (use
+    /// --uninstall to undo)
     InstallStatusline {
         /// restore the statusLine configuration from before the install
         #[arg(long)]
         uninstall: bool,
+        /// hook the Antigravity CLI's statusLine instead, for its weekly and
+        /// 5-hour limits
+        #[arg(long)]
+        antigravity: bool,
     },
-    /// Run as Claude Code's statusLine command (set up by install-statusline):
-    /// cache the rate limits from stdin, then run ORIGINAL_COMMAND with the
-    /// same stdin
+    /// Run as Claude Code's or the Antigravity CLI's statusLine command (set
+    /// up by install-statusline): cache the rate limits from stdin, then run
+    /// ORIGINAL_COMMAND with the same stdin
     Statusline {
         /// the statusLine command that was configured before the install
         #[arg(allow_hyphen_values = true)]
@@ -154,6 +159,17 @@ impl Args {
     }
 
     /// The Claude home to spell out in an installed statusLine command:
+    /// The Antigravity home to spell out in an installed statusLine command,
+    /// as `explicit_claude_home`.
+    pub fn explicit_antigravity_home(&self) -> Option<String> {
+        let path = self.antigravity_home_path();
+        if path == shellexpand_home(&default_antigravity_home()) {
+            None
+        } else {
+            Some(std::path::absolute(&path).unwrap_or(path).to_string_lossy().to_string())
+        }
+    }
+
     /// None for the default ~/.claude, which the hook finds on its own.
     pub fn explicit_claude_home(&self) -> Option<String> {
         let path = self.claude_home_path();

@@ -66,7 +66,7 @@ agents-live --once --color never   # 1回だけ表示して終了（診断用）
 
 ### 最上部の行
 
-時刻と、由来（Codex / Claude）ごとの週次制限のリセットからの経過時間（`DdHHhMMm`）を表示します。リセット時刻がまだ分からない由来は `-d--h--m` と表示します。並び順は `--group-order` のグループ順と同じです。この行は、どのテーマでも白で表示します。
+時刻と、由来（Codex / Claude / Antigravity）ごとの週次制限のリセットからの経過時間（`DdHHhMMm`）を表示します。リセット時刻がまだ分からない由来は `-d--h--m` と表示します。並び順は `--group-order` のグループ順と同じです。この行は、どのテーマでも白で表示します。
 
 ### 由来ごとの集計行
 
@@ -80,14 +80,14 @@ CLAUDE  Weekly 94%  5h 88%  1.2B $512   1 running · 1 subagents · 1 processes
 | 項目 | 意味 |
 |---|---|
 | `Weekly nn%` | 週次制限の残り |
-| `5h nn%` | 5時間制限の残り。Claude では常に表示します。Codex では、5時間の枠が報告されたときだけ表示します |
+| `5h nn%` | 5時間制限の残り。Claude と Antigravity では常に表示します。Codex では、5時間の枠が報告されたときだけ表示します |
 | `8.2B $4,321` | 直近30日のトークン数と概算コスト（後述） |
 | `cr $57` | 直近30日に Codex のクレジットで実際に支払った額（後述）。クレジットの残高が報告されたときだけ表示します |
 | `running` / `subagents` / `processes` | 実行中の行数、サブエージェント数、プロセス数 |
 
 由来ごとの数値は、それぞれ別に集計します。互いに合算はしません。
 
-Antigravity の集計行は `ANTIGRAVITY  0.6B $15   …` の形で、`Weekly` と `5h` はありません。Antigravity は利用制限の残りをローカルに記録しないためです。最上部の行にも、Antigravity のリセットからの経過時間は出しません。
+Antigravity の `Weekly` と `5h` は、Gemini と、それ以外のモデル（`3p`）などの枠のうち、残りが最も少ないものを表示します。値を表示するには、後述の設定が必要です。
 
 週次制限の残りが95%以上になると、リセットを知らせるために集計行を緑で表示します。5%未満になると、数値だけを赤で強調します。
 
@@ -160,7 +160,23 @@ agents-live install-statusline
 - 設定には、実行した `agents-live` の場所を書き込みます。別の場所にインストールし直したら、もう一度実行してください。
 - `agents-live install-statusline --uninstall` で、元のステータスラインの設定に戻せます。
 
-このツールで設定ファイルを書き換えるのは、この任意の手順だけです。自動で実行されることはありません。
+## Antigravity の週次制限と5時間制限の表示（任意）
+
+Antigravity CLI も、利用制限の残りをローカルのファイルに書き出さず、ステータスライン用のコマンドに標準入力で渡すだけです。そのため、何もしなければ Antigravity の値は `Weekly --`、`5h --` と表示されます。
+
+表示したい場合は、次を一度だけ実行します。
+
+```sh
+agents-live install-statusline --antigravity
+```
+
+このコマンドは `~/.gemini/antigravity-cli/settings.json` の `statusLine` を書き換え、Claude と同じ `agents-live statusline` を実行するようにします。制限の値は会話ごとに `~/.gemini/antigravity-cli/agents-live-statusline-cache/` へ保存します。
+
+- 元のステータスラインのコマンドがあれば、同じ入力でそのまま実行します。無ければ `stack_with_default` を有効にして、Antigravity の既定のステータスラインを残します。
+- バックアップ、何度実行しても同じこと、インストールし直したときの扱いは、Claude の場合と同じです。
+- `agents-live install-statusline --antigravity --uninstall` で、元の設定に戻せます。
+
+このツールで設定ファイルを書き換えるのは、これらの任意の手順だけです。自動で実行されることはありません。
 
 ## 30日間のトークン数と概算コスト
 

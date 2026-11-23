@@ -4,6 +4,12 @@
 
 利用者から見た変更を、バージョンごとに記録します。バージョン番号は `agents-live --version` で確認できます。
 
+## 0.5.0（2026-11-23）
+
+### 追加
+
+- Antigravity の集計行に、週次制限と5時間制限の残り（`Weekly nn%`、`5h nn%`）を表示するようにしました。最上部の行にも、Antigravity の週次制限のリセットからの経過時間を出します。値を表示するには、`agents-live install-statusline --antigravity` で Antigravity CLI のステータスラインを設定する必要があります（`--uninstall` で元に戻せます）。
+
 ## 0.4.0（2026-11-23）
 
 ### 追加

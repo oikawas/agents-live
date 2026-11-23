@@ -4,6 +4,12 @@ English | [日本語](CHANGELOG.ja.md)
 
 User-facing changes, by version. Run `agents-live --version` to see which version you have.
 
+## 0.5.0 (2026-11-23)
+
+### Added
+
+- The Antigravity summary line now shows the remaining weekly and 5-hour limits (`Weekly nn%`, `5h nn%`), and the top line shows the time since Antigravity's weekly reset. They need the Antigravity CLI's status line hooked with `agents-live install-statusline --antigravity` (`--uninstall` undoes it).
+
 ## 0.4.0 (2026-11-23)
 
 ### Added

@@ -1,6 +1,9 @@
 //! The optional Claude Code statusLine hook behind Claude's "Weekly nn%" and
 //! "5h nn%" figures: `agents-live statusline` and
-//! `agents-live install-statusline`.
+//! `agents-live install-statusline`. The Antigravity CLI pipes its limits to
+//! a statusLine command the same way, so the same hook serves it too
+//! (`install-statusline --antigravity`; payloads say `"product":
+//! "antigravity"`, see `antigravity/quota.rs`).
 //!
 //! Claude Code writes its rate-limit percentages to no local file; it only
 //! pipes them as JSON to the statusLine command's stdin on every render. The
@@ -44,9 +47,20 @@ fn now_secs() -> f64 {
 /// Runs as Claude Code's statusLine command. Never fails the status line
 /// over its own caching: a bad payload or an unwritable cache is skipped,
 /// and the original command still runs. Returns the exit code to use.
-pub fn run_hook(claude_home: &Path, original_command: &str, stdin: &[u8], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+pub fn run_hook(
+    claude_home: &Path,
+    antigravity_home: &Path,
+    original_command: &str,
+    stdin: &[u8],
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
     if let Ok(payload) = serde_json::from_slice::<Value>(stdin) {
-        cache_rate_limits(claude_home, &payload);
+        if crate::antigravity::quota::is_antigravity_payload(&payload) {
+            crate::antigravity::quota::cache_quota(antigravity_home, &payload);
+        } else {
+            cache_rate_limits(claude_home, &payload);
+        }
     }
     if original_command.trim().is_empty() {
         return 0;
@@ -148,12 +162,13 @@ pub fn shell_quote(value: &str) -> String {
 }
 
 /// The statusLine command that runs the hook through `exe`, then
-/// `original_command`. `--claude-home` is spelled out only when it is not the
-/// default, so the hook caches where the dashboard will look.
-pub fn hook_command(exe: &Path, claude_home_arg: Option<&str>, original_command: &str) -> String {
+/// `original_command`. The home option (`--claude-home`, `--antigravity-home`)
+/// is spelled out only when it is not the default, so the hook caches where
+/// the dashboard will look.
+fn hook_command_with(exe: &Path, home_flag: Option<(&str, &str)>, original_command: &str) -> String {
     let mut parts = vec![shell_quote(&exe.to_string_lossy())];
-    if let Some(home) = claude_home_arg {
-        parts.push("--claude-home".to_string());
+    if let Some((flag, home)) = home_flag {
+        parts.push(flag.to_string());
         parts.push(shell_quote(home));
     }
     parts.push(HOOK_SUBCOMMAND.to_string());
@@ -210,13 +225,79 @@ fn save_settings(path: &Path, settings: &Value) -> Result<(), String> {
     std::fs::write(path, text + "\n").map_err(|e| format!("cannot write {}: {}", path.display(), e))
 }
 
+/// Which tool's statusLine to hook: Claude Code (`~/.claude/settings.json`)
+/// or the Antigravity CLI (`~/.gemini/antigravity-cli/settings.json`). Both
+/// keep the command under `statusLine.command`.
+struct HookTarget<'a> {
+    home: &'a Path,
+    cache_dirname: &'static str,
+    /// The option that names this home, when it is not the default.
+    home_flag: Option<(&'static str, &'a str)>,
+    product: &'static str,
+    antigravity: bool,
+}
+
+impl HookTarget<'_> {
+    fn uninstall_command(&self) -> &'static str {
+        if self.antigravity {
+            "agents-live install-statusline --antigravity --uninstall"
+        } else {
+            "agents-live install-statusline --uninstall"
+        }
+    }
+
+    /// The statusLine value that runs `command`. Antigravity keeps its other
+    /// statusLine options; with no command of its own before, its built-in
+    /// status line is stacked under ours, since the hook prints nothing then.
+    fn status_line(&self, original: &Value, command: String, original_command: &str) -> Value {
+        if !self.antigravity {
+            return json!({"type": "command", "command": command});
+        }
+        let mut value = if original.is_object() { original.clone() } else { json!({}) };
+        value["command"] = Value::String(command);
+        if original_command.is_empty() {
+            value["stack_with_default"] = Value::Bool(true);
+        }
+        value
+    }
+}
+
+fn claude_target<'a>(claude_home: &'a Path, claude_home_arg: Option<&'a str>) -> HookTarget<'a> {
+    HookTarget {
+        home: claude_home,
+        cache_dirname: CLAUDE_STATUSLINE_CACHE_DIRNAME,
+        home_flag: claude_home_arg.map(|home| ("--claude-home", home)),
+        product: "Claude Code",
+        antigravity: false,
+    }
+}
+
+fn antigravity_target<'a>(home: &'a Path, home_arg: Option<&'a str>) -> HookTarget<'a> {
+    HookTarget {
+        home,
+        cache_dirname: crate::antigravity::quota::ANTIGRAVITY_STATUSLINE_CACHE_DIRNAME,
+        home_flag: home_arg.map(|home| ("--antigravity-home", home)),
+        product: "Antigravity CLI",
+        antigravity: true,
+    }
+}
+
 /// Points settings.json's statusLine at the hook. Idempotent: an install
 /// already running this very command is left alone. One made by another
 /// install location or by the retired Python wrapper is re-pointed, keeping
 /// the original command recorded at the first install.
 pub fn install(claude_home: &Path, exe: &Path, claude_home_arg: Option<&str>) -> Result<Vec<String>, String> {
-    let settings_path = claude_home.join("settings.json");
-    let cache_dir = claude_home.join(CLAUDE_STATUSLINE_CACHE_DIRNAME);
+    install_for(&claude_target(claude_home, claude_home_arg), exe)
+}
+
+/// `install` for the Antigravity CLI's statusLine.
+pub fn install_antigravity(home: &Path, exe: &Path, home_arg: Option<&str>) -> Result<Vec<String>, String> {
+    install_for(&antigravity_target(home, home_arg), exe)
+}
+
+fn install_for(target: &HookTarget, exe: &Path) -> Result<Vec<String>, String> {
+    let settings_path = target.home.join("settings.json");
+    let cache_dir = target.home.join(target.cache_dirname);
     let sidecar_path = cache_dir.join(SIDECAR_NAME);
     let mut messages = Vec::new();
 
@@ -238,7 +319,7 @@ pub fn install(claude_home: &Path, exe: &Path, claude_home_arg: Option<&str>) ->
                 ))
             }
         };
-        let command = hook_command(exe, claude_home_arg, status_line_command(Some(&original)).unwrap_or(""));
+        let command = hook_command_with(exe, target.home_flag, status_line_command(Some(&original)).unwrap_or(""));
         if status_line_command(current.as_ref()) == Some(command.as_str()) {
             messages.push("Already installed: statusLine already runs the agents-live hook.".to_string());
             return Ok(messages);
@@ -253,10 +334,8 @@ pub fn install(claude_home: &Path, exe: &Path, claude_home_arg: Option<&str>) ->
     };
 
     let original_command = status_line_command(Some(&original_status_line)).unwrap_or("").to_string();
-    settings["statusLine"] = json!({
-        "type": "command",
-        "command": hook_command(exe, claude_home_arg, &original_command),
-    });
+    let command = hook_command_with(exe, target.home_flag, &original_command);
+    settings["statusLine"] = target.status_line(&original_status_line, command, &original_command);
     let backup_path = backup(&settings_path)?;
     save_settings(&settings_path, &settings)?;
 
@@ -274,17 +353,26 @@ pub fn install(claude_home: &Path, exe: &Path, claude_home_arg: Option<&str>) ->
     } else {
         messages.push(format!("The original statusLine command ({:?}) still runs, unchanged.", original_command));
     }
-    messages.push("Open a new Claude Code session (or wait for the next status-line render in an".to_string());
+    messages.push(format!("Open a new {} session (or wait for the next status-line render in an", target.product));
     messages.push("existing one) for the limit cache to start filling in.".to_string());
-    messages.push("Run `agents-live install-statusline --uninstall` to restore the previous statusLine.".to_string());
+    messages.push(format!("Run `{}` to restore the previous statusLine.", target.uninstall_command()));
     Ok(messages)
 }
 
 /// Restores the statusLine recorded at install (removing the key if there
 /// was none). Works on an install made by the retired Python wrapper too.
 pub fn uninstall(claude_home: &Path) -> Result<Vec<String>, String> {
-    let settings_path = claude_home.join("settings.json");
-    let sidecar_path = claude_home.join(CLAUDE_STATUSLINE_CACHE_DIRNAME).join(SIDECAR_NAME);
+    uninstall_for(&claude_target(claude_home, None))
+}
+
+/// `uninstall` for the Antigravity CLI's statusLine.
+pub fn uninstall_antigravity(home: &Path) -> Result<Vec<String>, String> {
+    uninstall_for(&antigravity_target(home, None))
+}
+
+fn uninstall_for(target: &HookTarget) -> Result<Vec<String>, String> {
+    let settings_path = target.home.join("settings.json");
+    let sidecar_path = target.home.join(target.cache_dirname).join(SIDECAR_NAME);
     let mut messages = Vec::new();
 
     let mut settings = match load_json(&settings_path)? {
@@ -325,7 +413,7 @@ mod tests {
 
     fn hook(home: &Path, original: &str, stdin: &str) -> (i32, String, String) {
         let (mut out, mut err) = (Vec::new(), Vec::new());
-        let code = run_hook(home, original, stdin.as_bytes(), &mut out, &mut err);
+        let code = run_hook(home, home, original, stdin.as_bytes(), &mut out, &mut err);
         (code, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
     }
 
@@ -346,6 +434,61 @@ mod tests {
         // and the dashboard reads it back
         let (used, _, resets) = crate::claude::weekly::claude_weekly_sample(dir.path(), "sess-1");
         assert_eq!((Some(6.0), Some(1788609600.0)), (used, resets));
+    }
+
+    #[test]
+    fn an_antigravity_payload_is_cached_under_the_antigravity_home() {
+        let (claude, agy) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let payload = r#"{"product":"antigravity","session_id":"conv-1","conversation_id":"conv-1",
+            "quota":{"gemini-weekly":{"remaining_fraction":0.75,"reset_time":"2026-11-29T22:30:38Z"}}}"#;
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        assert_eq!(0, run_hook(claude.path(), agy.path(), "", payload.as_bytes(), &mut out, &mut err));
+        assert!(!claude.path().join(CLAUDE_STATUSLINE_CACHE_DIRNAME).exists());
+        let sample = crate::antigravity::quota::latest_quota(agy.path()).unwrap();
+        assert!((sample.weekly.unwrap().used_percent - 25.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn antigravity_install_keeps_its_settings_and_stacks_the_default_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let settings = home.join("settings.json");
+        std::fs::write(&settings, r#"{"colorScheme":"dark","trustedWorkspaces":["/w"]}"#).unwrap();
+
+        let messages = install_antigravity(home, Path::new("/opt/bin/agents-live"), None).unwrap();
+        assert!(messages.iter().any(|m| m.contains("--antigravity --uninstall")), "{:?}", messages);
+        let installed: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!("dark", installed["colorScheme"]);
+        assert_eq!("/opt/bin/agents-live statusline ''", installed["statusLine"]["command"]);
+        // nothing printed of our own, so the built-in line must stay
+        assert_eq!(true, installed["statusLine"]["stack_with_default"]);
+        assert!(installed["statusLine"].get("type").is_none());
+        // a second run changes nothing
+        assert!(install_antigravity(home, Path::new("/opt/bin/agents-live"), None).unwrap()[0].starts_with("Already installed"));
+
+        uninstall_antigravity(home).unwrap();
+        let restored: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        assert!(restored.get("statusLine").is_none());
+        assert_eq!("dark", restored["colorScheme"]);
+    }
+
+    #[test]
+    fn antigravity_install_wraps_an_existing_command_and_keeps_its_options() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let settings = home.join("settings.json");
+        std::fs::write(&settings, r#"{"statusLine":{"command":"my-line","padding":1}}"#).unwrap();
+        install_antigravity(home, Path::new("/opt/bin/agents-live"), Some("/tmp/agy home")).unwrap();
+        let installed: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(
+            "/opt/bin/agents-live --antigravity-home '/tmp/agy home' statusline my-line",
+            installed["statusLine"]["command"]
+        );
+        assert_eq!(1, installed["statusLine"]["padding"]);
+        assert!(installed["statusLine"].get("stack_with_default").is_none());
+        uninstall_antigravity(home).unwrap();
+        let restored: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(serde_json::json!({"command":"my-line","padding":1}), restored["statusLine"]);
     }
 
     #[test]
@@ -525,7 +668,7 @@ mod tests {
     fn a_non_default_claude_home_is_passed_to_the_hook() {
         assert_eq!(
             "/opt/bin/agents-live --claude-home '/tmp/my claude' statusline ''",
-            hook_command(Path::new("/opt/bin/agents-live"), Some("/tmp/my claude"), "")
+            hook_command_with(Path::new("/opt/bin/agents-live"), Some(("--claude-home", "/tmp/my claude")), "")
         );
     }
 }

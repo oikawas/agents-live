@@ -4,6 +4,7 @@
 //! database says whether each one is working.
 
 use crate::antigravity::db::{load_conversations, Conversation, ConversationLog};
+use crate::antigravity::quota::latest_quota;
 use crate::codex::lock::held_lock_ids;
 use crate::model::{AgentRowState, Thread};
 use std::collections::{HashMap, HashSet};
@@ -63,6 +64,8 @@ pub fn snapshot(
         Err(err) => (HashMap::new(), Some(format!("antigravity summaries unavailable: {}", err))),
     };
     let shown = shown_conversations(&held, &conversations);
+    // Account-wide limits, cached by the optional statusLine hook.
+    let quota = latest_quota(home);
     let shown_ids: HashSet<&str> = shown.iter().map(|(id, _)| id.as_str()).collect();
 
     let mut threads = Vec::new();
@@ -129,6 +132,12 @@ pub fn snapshot(
                 phase_at,
                 activity: activity.to_string(),
                 total_tokens: Some(log.total_tokens()),
+                weekly_used_percent: quota.and_then(|q| q.weekly).map(|l| l.used_percent),
+                weekly_sample_at: quota.and_then(|q| q.weekly.map(|_| q.captured_at)),
+                weekly_resets_at: quota.and_then(|q| q.weekly).and_then(|l| l.resets_at),
+                five_hour_used_percent: quota.and_then(|q| q.five_hour).map(|l| l.used_percent),
+                five_hour_sample_at: quota.and_then(|q| q.five_hour.map(|_| q.captured_at)),
+                five_hour_resets_at: quota.and_then(|q| q.five_hour).and_then(|l| l.resets_at),
                 ..AgentRowState::default()
             },
         );

@@ -538,10 +538,10 @@ impl Dashboard {
         Self::latest_weekly_state(visible, states, origin).and_then(|s| s.weekly_used_percent)
     }
 
-    /// "  5h nn%" to follow the weekly figure. Claude always shows it
-    /// ("5h --" when the statusline cache has no sample yet), like its
-    /// weekly figure. Codex currently imposes no 5-hour window, so it is
-    /// shown only once some visible thread actually reports one.
+    /// "  5h nn%" to follow the weekly figure. Claude and Antigravity always
+    /// show it ("5h --" when the statusline cache has no sample yet), like
+    /// their weekly figure. Codex currently imposes no 5-hour window, so it
+    /// is shown only once some visible thread actually reports one.
     fn five_hour_summary_part(
         &self,
         origin: &str,
@@ -549,7 +549,9 @@ impl Dashboard {
         states: &HashMap<String, AgentRowState>,
     ) -> String {
         let state = Self::latest_five_hour_state(visible, states, origin);
-        if state.is_none() && origin != "claude" {
+        // Codex shows 5h only once a 5-hour window is reported; Claude and
+        // Antigravity always have one ("5h --" until the hook has run).
+        if state.is_none() && origin == "codex" {
             return String::new();
         }
         let used = state.and_then(|s| five_hour_effective_used(s.five_hour_used_percent, s.five_hour_resets_at, now_secs()));
@@ -577,11 +579,6 @@ impl Dashboard {
         let counts = format!("{} running \u{b7} {} subagents \u{b7} {} processes", running, child_count, process_count);
         let weekly_text = weekly_label(weekly_used_percent);
         let five_hour_text = self.five_hour_summary_part(origin, visible, states);
-        if origin == "antigravity" {
-            // Antigravity records no usage limits locally: no Weekly / 5h.
-            let summary = format!("{}  {} {}   {}", source_tag, tokens_label, cost_label, counts);
-            return self.painted(&fit(&summary, width, false), "header", origin);
-        }
         let summary = format!(
             "{}  {}{}  {} {}   {}",
             source_tag, weekly_text, five_hour_text, tokens_label, cost_label, counts
@@ -694,9 +691,8 @@ impl Dashboard {
             // Left to right in the same order as the source groups below
             // (--group-order), so each reset figure lines up with its list.
             let mut parts = vec![format!("{}  {}", title, stamp)];
-            // Antigravity has no weekly limit to count down to.
             for (origin, label, enabled) in self.sources() {
-                if !enabled || origin == "antigravity" {
+                if !enabled {
                     continue;
                 }
                 let resets_at = Self::latest_weekly_state(&visible, states, origin).and_then(|s| s.weekly_resets_at);
