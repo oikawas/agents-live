@@ -100,6 +100,22 @@ pub fn claude_theme() -> Palette {
     )
 }
 
+/// Antigravity rows: Google blue, kept apart from the Codex themes and the
+/// Claude orange.
+pub fn antigravity_theme() -> Palette {
+    base_palette(
+        "\x1b[1;38;5;33m",
+        "\x1b[38;5;25m",
+        "\x1b[1;38;5;75m",
+        "\x1b[1;38;5;153m",
+        "\x1b[38;5;103m",
+        "\x1b[1;38;5;220m",
+        "\x1b[1;38;5;196m",
+        "\x1b[1;38;5;195m",
+        "\x1b[38;5;103m",
+    )
+}
+
 pub fn all_idle_bg_style(color: &str) -> &'static str {
     match color {
         "black" => "\x1b[1;97;48;5;16m",

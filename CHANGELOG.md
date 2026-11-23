@@ -4,6 +4,16 @@ English | [日本語](CHANGELOG.ja.md)
 
 User-facing changes, by version. Run `agents-live --version` to see which version you have.
 
+## 0.4.0 (2026-11-23)
+
+### Added
+
+- Support for Google's Antigravity CLI. Running conversations and the agents they start are shown as a third source (`ANTIGRAVITY`) alongside Codex and Claude, with status, title, model, effort, and tokens, and a summary line with the 30-day token count and an estimated cost at Gemini API rates. Use `--antigravity on|off` and `--antigravity-home PATH` to control it. Without an Antigravity CLI data directory, the display is the same as before.
+
+### Fixed
+
+- Added the rate for Codex's new model `gpt-6.2-sol`. It had no rate, so its usage was missing from the 30-day token count and cost, and the cost carried a `+?`.
+
 ## 0.3.1 (2026-11-17)
 
 ### Fixed

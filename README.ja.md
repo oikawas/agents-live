@@ -4,6 +4,7 @@
 
 Claude Code / CodexをCLIベースで使う人のためのツールです。
 ローカルで動いている **Codex** と **Claude Code** のセッションと、それらが起動したサブエージェントの状態を、ターミナルに表示し続ける読み取り専用のダッシュボードです。
+Google の **Antigravity CLI** の会話も、同じ画面に表示できます。
 Childの状況や、Weekly limitを常時簡単に把握することが目的です。SSDへの負担を考慮して、ディスクへの書き込みは最小になるようにしています。
 
 ```text
@@ -26,16 +27,18 @@ q / Esc / Ctrl-C to stop
 
 - **Codex と Claude Code を1画面に表示**します。セッションごとにまとめ、メインのスレッドの下にサブエージェントを子行として並べます。Claude Code / Codexどちらか一方だけを表示することもできます。
 - **サブエージェントとバックグラウンドの作業も追跡**します。Claude Code では、`Agent` / `Task` ツールのサブエージェントを追跡します。`run_in_background` で起動したり、時間切れでバックグラウンドへ移されたりした `Bash` コマンドも、完了するまで `RUN` と表示します。
+- **Antigravity CLI の会話も表示**します。会話が起動したエージェントは子行として並べます。Antigravity CLI のデータディレクトリ（`~/.gemini/antigravity-cli`）が無いときは、何も表示しません。
 - **週次制限と5時間制限の残り**、**リセットからの経過時間**を表示します。
 - **直近30日のトークン数と、API料金に換算した概算コスト**を表示します。あくまでお遊びの参考値として見てください。
-- **読み取り専用**です。Codex や Claude Code の状態を変更せず、ネットワーク接続もしません。安全かつプライバシーを保って利用できます。
+- **読み取り専用**です。Codex、Claude Code、Antigravity の状態を変更せず、ネットワーク接続もしません。安全かつプライバシーを保って利用できます。
 
 ## 動作環境
 
 - macOS（x86） で開発・確認しています。他の Unix 系 OS は未検証で、Windows には対応していません。
 - Rust（stable）のツールチェーンが必要です。依存するクレートは、ビルド時に `cargo` が自動で取得します。
 - C コンパイラが必要です。SQLite をソースから組み込んでビルドするためで、macOS では Xcode Command Line Tools（`xcode-select --install`）で入ります。
-- Codex では `lsof` コマンドを使います。
+- Codex と Antigravity では `lsof` コマンドを使います。
+- Antigravity は、Antigravity CLI 1.5.14 で確認しています。デスクトップ版（IDE）の Antigravity には対応していません。
 
 ## インストール
 
@@ -50,9 +53,10 @@ cargo install --path rust
 ## 使い方
 
 ```sh
-agents-live                        # Codex と Claude Code の両方を表示
+agents-live                        # Codex、Claude Code、Antigravity を表示
 agents-live --claude off           # Codex だけを表示
 agents-live --codex off            # Claude Code だけを表示
+agents-live --antigravity off      # Antigravity を表示しない
 agents-live --once --color never   # 1回だけ表示して終了（診断用）
 ```
 
@@ -81,7 +85,9 @@ CLAUDE  Weekly 94%  5h 88%  1.2B $512   1 running · 1 subagents · 1 processes
 | `cr $57` | 直近30日に Codex のクレジットで実際に支払った額（後述）。クレジットの残高が報告されたときだけ表示します |
 | `running` / `subagents` / `processes` | 実行中の行数、サブエージェント数、プロセス数 |
 
-Codex と Claude の数値は、それぞれ別に集計します。互いに合算はしません。
+由来ごとの数値は、それぞれ別に集計します。互いに合算はしません。
+
+Antigravity の集計行は `ANTIGRAVITY  0.6B $15   …` の形で、`Weekly` と `5h` はありません。Antigravity は利用制限の残りをローカルに記録しないためです。最上部の行にも、Antigravity のリセットからの経過時間は出しません。
 
 週次制限の残りが95%以上になると、リセットを知らせるために集計行を緑で表示します。5%未満になると、数値だけを赤で強調します。
 
@@ -102,12 +108,12 @@ Codex と Claude の数値は、それぞれ別に集計します。互いに合
 - 高速モードのセッションは、モデル名の前に `⚡`（`fast` / `priority`）または `⚡⚡`（`ultrafast`）を付けます。
 - reasoning effort のうち、`high` は水色、`xhigh` は黄色、`ultra` は赤の背景で表示します。
 - Claude Code のセッションは、モデルは待機中でもバックグラウンドのシェルが生きているとき、`IDLE` のまま活動欄に `bg shell` と表示します。
-- Claude の行は暖色系で、Codex の行は別の寒色系の配色で表示します。
+- Claude の行は暖色系で、Codex の行は別の寒色系の配色で表示します。Antigravity の行は青系です。
 - Codex の `/rename` で付けた名前は、次の更新で反映されます。
 
 ### 全セッション待機バナー
 
-表示中のセッションがすべて待機中で、サブエージェントもすべて完了すると、最上部の行が画面幅いっぱいのバナー（`████  ALL AGENTS IDLE  ████`）になります。片方の由来だけを表示しているときは `ALL CODEX SESSIONS IDLE` または `ALL CLAUDE SESSIONS IDLE` と表示します。オプションで on / off可能です。
+表示中のセッションがすべて待機中で、サブエージェントもすべて完了すると、最上部の行が画面幅いっぱいのバナー（`████  ALL AGENTS IDLE  ████`）になります。1つの由来だけを表示しているときは `ALL CODEX SESSIONS IDLE`、`ALL CLAUDE SESSIONS IDLE`、`ALL ANTIGRAVITY SESSIONS IDLE` のいずれかを表示します。オプションで on / off可能です。
 
 ## オプション
 
@@ -117,12 +123,14 @@ Codex と Claude の数値は、それぞれ別に集計します。互いに合
 | `--claude on\|off` | Claude Code を表示するか | `on` |
 | `--codex-home PATH` | Codex のデータディレクトリ | `~/.codex` |
 | `--claude-home PATH` | Claude Code のデータディレクトリ | `~/.claude` |
+| `--antigravity on\|off` | Antigravity CLI を表示するか | `on` |
+| `--antigravity-home PATH` | Antigravity CLI のデータディレクトリ | `~/.gemini/antigravity-cli` |
 | `--once` | 1回だけ表示して終了する | |
 | `--interval SEC` | 更新間隔（秒） | `0.7` |
 | `--process PID` | 指定した Codex の PID だけを表示する | |
 | `--hide-done` | 完了したサブエージェントを隠す（別名 `--hide-done-children`） | |
 | `--show-guardians` | Codex 内部の guardian スレッドも表示する | |
-| `--group-order codex-first\|claude-first` | どちらの由来のグループを上に置くか | `codex-first` |
+| `--group-order codex-first\|claude-first` | Codex と Claude のどちらのグループを上に置くか。Antigravity は常に最後 | `codex-first` |
 | `--group-sort created\|session-name` | 各由来の中での PID グループの並び順 | `created` |
 | `--compact-groups on\|off` | グループの間の空行を省くか | `on` |
 | `--tokens on\|off` | 行ごとの累積トークン数を表示するか | `on` |
@@ -160,6 +168,7 @@ agents-live install-statusline
 
 - Codex は、OpenAI の標準API料金（input、cached input、cache write、output、長文脈の割増）で計算します。
 - Claude Code は、Anthropic の標準API料金（input、モデル別の cache read、cache write、output）で計算します。サブエージェントのトランスクリプトも含めます。
+- Antigravity は、Google の Gemini API の標準料金（input、キャッシュ、output。output は思考トークンを含む）で計算します。Antigravity から Claude のモデルを使ったときは、Anthropic の料金で計算します。
 - ツール呼び出しの料金と、サービスティアによる料金差は含めません。
 - 単価表に無いモデルのトークンは、トークン数と金額の両方から除きます。そうしたトークンが直近30日の1%以上を占めると、金額の後ろに `+?` を付けます（例：`$1,838+?`）。新しいモデルが出たときは、単価表（`rust/src/model.rs`）への追加が必要です。
 - Codex のクレジット（上限を超えた後の追加購入分）を使ったときは、金額の後ろに、直近30日のクレジットの消費額を `cr $57` の形で出します。セッション記録に残るクレジットの残高の推移から、購入による増加を足し戻して計算し、25クレジット＝$1 で換算します。この換算率は、OpenAI の Codex の料金表として引用されている値で、公式のページでは確かめられていない暫定値です。Claude の追加利用は、ローカルに記録が残らないため対象外です。
@@ -167,15 +176,16 @@ agents-live install-statusline
 
 ## 仕組み
 
-`agents-live` はローカルのファイルを読むだけで、Codex と Claude Code の状態は変更しません。
+`agents-live` はローカルのファイルを読むだけで、Codex、Claude Code、Antigravity の状態は変更しません。
 
 - **Codex**：`lsof` で実行中の Codex プロセスが保持しているロックを調べます。スレッドの情報は `~/.codex/state_5.sqlite` から読みます。各スレッドのロールアウト（JSONL）は、追記された分だけを読みます。
   - Codex 0.157 以降は、すべてのセッションのロックを1つのデーモン（`codex app-server`）が保持します。そのため、セッション（最上位のスレッド）ごとに分けて表示し、見出しに `app-server <PID>` と表示します。
   - Codex 0.157 のデーモンは、ターミナルを閉じた後もセッションのスレッドを保持し続けることがあります。その間、終了したセッションが `IDLE` や `DONE` として表示されます。Codex 側の問題のため、Codex の修正を待っています。
 - **Claude Code**：`~/.claude/sessions/<pid>.json` から、プロセスが生きているセッションとその状態を読みます。`busy` だけを `RUN` とします。モデル、トークン数、サブエージェントの情報は、`~/.claude/projects/` のトランスクリプト（JSONL）から、追記された分だけを読みます。
+- **Antigravity**：`lsof` で、実行中の Antigravity CLI のプロセスが開いている `~/.gemini/antigravity-cli/presence/<会話ID>.lock` を調べます。会話の状態とタイトルは `conversation_summaries.db` から読み、`RUNNING`・`BUSY`・`CANCELING` を `RUN` とします。モデルとトークン数は、`conversations/<会話ID>.db` に protobuf で記録された呼び出しごとの使用量から読みます。
 - 30日間の集計は、バックグラウンドで最大60秒に1回更新します。前回からサイズか inode が変わったファイルだけを読み直します。集計結果はメモリにだけ保持し、ディスクには書きません。
 
-これらは Codex と Claude Code の内部のファイル形式に依存しています。どちらかの更新で形式が変わると、表示が崩れたり、値が取れなくなったりすることがあります。
+これらは Codex、Claude Code、Antigravity の内部のファイル形式に依存しています。いずれかの更新で形式が変わると、表示が崩れたり、値が取れなくなったりすることがあります。
 
 ## 開発
 
@@ -193,7 +203,7 @@ README は日本語版（このファイル）が正本で、英語版の [READM
 
 ## 注意
 
-このツールは非公式のものです。OpenAI とも Anthropic とも関係ありません。Codex は OpenAI の、Claude と Claude Code は Anthropic の製品です。
+このツールは非公式のものです。OpenAI、Anthropic、Google のいずれとも関係ありません。Codex は OpenAI の、Claude と Claude Code は Anthropic の、Antigravity と Gemini は Google の製品です。
 
 ## ライセンス
 

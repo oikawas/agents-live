@@ -7,6 +7,13 @@ use std::time::Duration;
 /// live `codex` process, via `lsof -Fpcn` on every `*.lock` file. Mirrors
 /// `held_thread_ids` in the Python script.
 pub fn held_thread_ids(lock_dir: &Path) -> (HashMap<String, i64>, Option<String>) {
+    held_lock_ids(lock_dir, "codex", "Codex")
+}
+
+/// `<id>.lock` files in `lock_dir` held open by a process whose command name
+/// starts with `command_prefix`, as id -> pid. Antigravity keeps one such
+/// presence lock per open conversation, the same way Codex does per thread.
+pub fn held_lock_ids(lock_dir: &Path, command_prefix: &str, product: &str) -> (HashMap<String, i64>, Option<String>) {
     let lock_files: Vec<PathBuf> = match std::fs::read_dir(lock_dir) {
         Ok(entries) => {
             let mut files: Vec<PathBuf> = entries
@@ -34,7 +41,7 @@ pub fn held_thread_ids(lock_dir: &Path) -> (HashMap<String, i64>, Option<String>
         Ok(Err(_not_found)) => {
             return (
                 HashMap::new(),
-                Some("lsof not found; install lsof to discover live Codex processes".to_string()),
+                Some(format!("lsof not found; install lsof to discover live {} processes", product)),
             );
         }
         Err(err) => return (HashMap::new(), Some(format!("lsof failed: {}", err))),
@@ -53,7 +60,7 @@ pub fn held_thread_ids(lock_dir: &Path) -> (HashMap<String, i64>, Option<String>
         } else if let Some(rest) = line.strip_prefix('c') {
             command = rest.to_string();
         } else if let Some(rest) = line.strip_prefix('n') {
-            if pid.is_some() && command.to_lowercase().starts_with("codex") {
+            if pid.is_some() && command.to_lowercase().starts_with(command_prefix) {
                 if let Some(name) = Path::new(rest).file_name().and_then(|s| s.to_str()) {
                     if let Some(id) = name.strip_suffix(".lock") {
                         mapping.insert(id.to_string(), pid.unwrap());

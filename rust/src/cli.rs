@@ -15,6 +15,10 @@ fn default_claude_home() -> String {
     })
 }
 
+fn default_antigravity_home() -> String {
+    format!("{}/.gemini/antigravity-cli", dirs_home())
+}
+
 fn dirs_home() -> String {
     std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
 }
@@ -22,7 +26,7 @@ fn dirs_home() -> String {
 #[derive(Parser, Debug, Clone)]
 #[command(
     version,
-    about = "Continuously show live Codex and Claude Code main and subagent status.",
+    about = "Continuously show live Codex, Claude Code and Antigravity main and subagent status.",
     disable_help_flag = false
 )]
 pub struct Args {
@@ -41,6 +45,14 @@ pub struct Args {
     /// show or hide Claude Code main and spawned agents
     #[arg(long, default_value = "on", value_parser = ["on", "off"])]
     pub claude: String,
+
+    /// Antigravity CLI data directory
+    #[arg(long, default_value_t = default_antigravity_home())]
+    pub antigravity_home: String,
+
+    /// show or hide Antigravity CLI conversations and the agents they start
+    #[arg(long, default_value = "on", value_parser = ["on", "off"])]
+    pub antigravity: String,
 
     /// refresh interval in seconds
     #[arg(long, default_value_t = 0.7)]
@@ -136,6 +148,9 @@ impl Args {
     }
     pub fn claude_home_path(&self) -> PathBuf {
         shellexpand_home(&self.claude_home)
+    }
+    pub fn antigravity_home_path(&self) -> PathBuf {
+        shellexpand_home(&self.antigravity_home)
     }
 
     /// The Claude home to spell out in an installed statusLine command:

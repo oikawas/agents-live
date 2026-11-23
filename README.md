@@ -4,6 +4,7 @@ English | [日本語](README.ja.md)
 
 A tool for people who use Claude Code and Codex from the command line.
 A read-only terminal dashboard that continuously shows the state of the **Codex** and **Claude Code** sessions running on your machine, along with the subagents they start.
+It can also show Google's **Antigravity CLI** conversations on the same screen.
 Its goal is to let you keep track of your subagents and weekly limits at a glance, at all times. To spare your SSD, it keeps disk writes to a minimum.
 
 ```text
@@ -28,14 +29,16 @@ q / Esc / Ctrl-C to stop
 - **Tracks subagents and background work.** For Claude Code, this covers `Agent` / `Task` subagents and `Bash` commands started with `run_in_background` or moved to the background after a timeout; each stays `RUN` until it finishes.
 - **Remaining weekly and 5-hour limits**, and the time elapsed since the weekly reset.
 - **30-day token count and an API-equivalent cost estimate.** Treat it as a just-for-fun reference figure.
-- **Read-only.** It never changes Codex or Claude Code state and never connects to the network, so it is safe to use and keeps your data private.
+- **Antigravity CLI conversations, too.** Agents a conversation starts are listed as child rows. Nothing is shown when the Antigravity CLI data directory (`~/.gemini/antigravity-cli`) does not exist.
+- **Read-only.** It never changes Codex, Claude Code, or Antigravity state and never connects to the network, so it is safe to use and keeps your data private.
 
 ## Requirements
 
 - Developed and tested on macOS (x86). Other Unix-like systems are untested; Windows is not supported.
 - A Rust (stable) toolchain. `cargo` fetches the crates it depends on automatically at build time.
 - A C compiler, because SQLite is built from source into the binary. On macOS, install the Xcode Command Line Tools (`xcode-select --install`).
-- `lsof`, used for Codex.
+- `lsof`, used for Codex and Antigravity.
+- Antigravity support is tested with Antigravity CLI 1.5.14. The Antigravity desktop app (IDE) is not supported.
 
 ## Installation
 
@@ -50,9 +53,10 @@ This installs `~/.cargo/bin/agents-live`.
 ## Usage
 
 ```sh
-agents-live                        # show both Codex and Claude Code
+agents-live                        # show Codex, Claude Code, and Antigravity
 agents-live --claude off           # Codex only
 agents-live --codex off            # Claude Code only
+agents-live --antigravity off      # hide Antigravity
 agents-live --once --color never   # print one snapshot and exit (for diagnostics)
 ```
 
@@ -81,7 +85,9 @@ CLAUDE  Weekly 94%  5h 88%  1.2B $512   1 running · 1 subagents · 1 processes
 | `cr $57` | What you actually paid in Codex credits over the last 30 days (see below). Shown only when a credit balance is reported |
 | `running` / `subagents` / `processes` | Running rows, subagents, and processes |
 
-Codex and Claude figures are computed separately and never combined.
+Each source's figures are computed separately and never combined.
+
+The Antigravity summary line reads `ANTIGRAVITY  0.6B $15   …`, with no `Weekly` or `5h`: Antigravity records nothing about its usage limits locally. For the same reason, the top line shows no reset time for Antigravity.
 
 When the remaining weekly limit is 95% or more, the summary line turns green to signal that the limit has just reset. Below 5%, the figure alone is highlighted in red.
 
@@ -102,12 +108,12 @@ Each row shows the state, name, current activity, elapsed time, model, reasoning
 - Fast sessions get `⚡` (`fast` / `priority`) or `⚡⚡` (`ultrafast`) before the model name.
 - Reasoning effort `high` is shown on a light-blue background, `xhigh` on yellow, and `ultra` on red.
 - A Claude Code session whose model is idle while a background shell is still alive stays `IDLE` and shows `bg shell` as its activity.
-- Claude rows use a warm color palette, and Codex rows a separate cool one.
+- Claude rows use a warm color palette, and Codex rows a separate cool one. Antigravity rows are blue.
 - A name set with Codex's `/rename` appears on the next refresh.
 
 ### All-idle banner
 
-When every visible session is idle and every subagent has finished, the top line becomes a full-width banner (`████  ALL AGENTS IDLE  ████`). With only one source shown, it reads `ALL CODEX SESSIONS IDLE` or `ALL CLAUDE SESSIONS IDLE`. It can be turned on or off with an option.
+When every visible session is idle and every subagent has finished, the top line becomes a full-width banner (`████  ALL AGENTS IDLE  ████`). With only one source shown, it reads `ALL CODEX SESSIONS IDLE`, `ALL CLAUDE SESSIONS IDLE`, or `ALL ANTIGRAVITY SESSIONS IDLE`. It can be turned on or off with an option.
 
 ## Options
 
@@ -117,12 +123,14 @@ When every visible session is idle and every subagent has finished, the top line
 | `--claude on\|off` | Show Claude Code | `on` |
 | `--codex-home PATH` | Codex data directory | `~/.codex` |
 | `--claude-home PATH` | Claude Code data directory | `~/.claude` |
+| `--antigravity on\|off` | Show Antigravity CLI | `on` |
+| `--antigravity-home PATH` | Antigravity CLI data directory | `~/.gemini/antigravity-cli` |
 | `--once` | Print one snapshot and exit | |
 | `--interval SEC` | Refresh interval in seconds | `0.7` |
 | `--process PID` | Show only one Codex PID | |
 | `--hide-done` | Hide finished subagents (alias `--hide-done-children`) | |
 | `--show-guardians` | Include Codex's internal guardian threads | |
-| `--group-order codex-first\|claude-first` | Which source's groups come first | `codex-first` |
+| `--group-order codex-first\|claude-first` | Whether Codex or Claude groups come first. Antigravity always comes last | `codex-first` |
 | `--group-sort created\|session-name` | Order of PID groups within each source | `created` |
 | `--compact-groups on\|off` | Omit the blank line between groups | `on` |
 | `--tokens on\|off` | Show cumulative tokens on each row | `on` |
@@ -160,6 +168,7 @@ The token count and dollar figure on each summary line are an **API-equivalent e
 
 - Codex uses OpenAI's standard API rates (input, cached input, cache write, output, and the long-context surcharge).
 - Claude Code uses Anthropic's standard API rates (input, per-model cache read, cache write, and output), including subagent transcripts.
+- Antigravity uses Google's standard Gemini API rates (input, caching, and output, where output includes thinking tokens). A Claude model used from Antigravity is priced at Anthropic's rates.
 - Tool-call fees and service-tier price differences are not included.
 - Tokens from models missing from the pricing table are left out of both the token count and the cost. When such tokens make up 1% or more of the last 30 days, the cost gets a `+?` suffix (for example, `$1,838+?`). A newly released model needs an entry in the pricing table (`rust/src/model.rs`).
 - When Codex credits (purchased beyond your plan's limits) are in use, the cost is followed by the last 30 days' credit spend, as in `cr $57`. It is worked out from the credit balance recorded in your session records, adding back any rise from a purchase, and converted at 25 credits = $1, the rate commonly cited from OpenAI's Codex rate card; it is provisional, as it could not be checked against the official page. Claude's extra usage is not covered, since nothing about it is recorded locally.
@@ -167,15 +176,16 @@ The token count and dollar figure on each summary line are an **API-equivalent e
 
 ## How it works
 
-`agents-live` only reads local files; it never changes Codex or Claude Code state.
+`agents-live` only reads local files; it never changes Codex, Claude Code, or Antigravity state.
 
 - **Codex**: finds the locks held by running Codex processes with `lsof`, reads thread metadata from `~/.codex/state_5.sqlite`, and reads only the newly appended part of each thread's rollout (JSONL).
   - Since Codex 0.157, a single daemon (`codex app-server`) holds the locks of every session, so rows are split by session (root thread), with `app-server <PID>` in the header.
   - The Codex 0.157 daemon sometimes keeps a session's threads after its terminal has been closed. Until it lets go, the ended session keeps showing as `IDLE` or `DONE`. This is on the Codex side, and we are waiting for a Codex fix.
 - **Claude Code**: reads live sessions and their status from `~/.claude/sessions/<pid>.json`, keeping only sessions whose process is alive. Only the `busy` status counts as `RUN`. Model, token, and subagent details come from the transcripts (JSONL) under `~/.claude/projects/`, again reading only what was appended.
+- **Antigravity**: finds, with `lsof`, the `~/.gemini/antigravity-cli/presence/<conversation id>.lock` files that running Antigravity CLI processes hold open. Conversation status and titles come from `conversation_summaries.db`, where `RUNNING`, `BUSY`, and `CANCELING` count as `RUN`. Model and token details come from the per-call usage recorded as protobuf in `conversations/<conversation id>.db`.
 - The 30-day totals are refreshed in the background at most once every 60 seconds, rereading only files whose size or inode changed. They are kept in memory only and never written to disk.
 
-All of this depends on Codex's and Claude Code's internal file formats. An update to either tool can change those formats and break the display or leave some values unavailable.
+All of this depends on the internal file formats of Codex, Claude Code, and Antigravity. An update to any of them can change those formats and break the display or leave some values unavailable.
 
 ## Development
 
@@ -193,7 +203,7 @@ See [CHANGELOG.md](CHANGELOG.md).
 
 ## Disclaimer
 
-This is an unofficial tool, not affiliated with OpenAI or Anthropic. Codex is a product of OpenAI; Claude and Claude Code are products of Anthropic.
+This is an unofficial tool, not affiliated with OpenAI, Anthropic, or Google. Codex is a product of OpenAI; Claude and Claude Code are products of Anthropic; Antigravity and Gemini are products of Google.
 
 ## License
 

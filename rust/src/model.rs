@@ -41,6 +41,7 @@ pub fn codex_model_pricing(model: &str) -> Option<(f64, f64, f64)> {
     let model = if model == "gpt-5.6" { "gpt-5.6-sol" } else { model };
     match model {
         "gpt-6-astra" => Some((10.00, 1.00, 50.00)),
+        "gpt-6.2-sol" => Some((2.00, 0.10, 10.00)),
         "gpt-6.1-sol" => Some((2.00, 0.10, 10.00)),
         "gpt-6.1-terra" => Some((1.00, 0.05, 5.00)),
         "gpt-6-sol" => Some((2.00, 0.20, 10.00)),
@@ -88,6 +89,43 @@ pub fn claude_model_pricing(model: &str) -> Option<(f64, f64, f64)> {
         "claude-haiku-4-5" => Some((1.00, 0.10, 5.00)),
         _ => None,
     }
+}
+
+/// (input, cache read, output) USD per 1M tokens, from Google's Gemini API
+/// standard (paid tier) pricing (aistudio.google.com/docs/pricing). Output
+/// includes thinking tokens. Gemini 4 caching is implicit only, so there is
+/// no separate cache-write rate. gemini-4-carbon and gemini-4-argon are left
+/// out on purpose: their rates double on 2026-12-01, and a model whose price
+/// depends on the date needs more than one row here.
+pub fn gemini_model_pricing(model: &str) -> Option<(f64, f64, f64)> {
+    match model {
+        "gemini-4-neon" => Some((3.00, 0.15, 15.00)),
+        "gemini-4-hydrogen" => Some((1.50, 0.075, 7.50)),
+        "gemini-3.5-flash-lite" => Some((0.30, 0.03, 2.50)),
+        _ => None,
+    }
+}
+
+/// One Antigravity model call at API rates. Antigravity runs Gemini models
+/// and, optionally, Claude ones, so a Claude id is priced from Anthropic's
+/// table (its cache writes at the 5-minute rate, the TTL being unrecorded).
+pub fn antigravity_api_equivalent_cost(model: Option<&str>, usage: &crate::antigravity::db::CallUsage) -> Option<f64> {
+    let model = model?;
+    let per_million = |tokens: i64, rate: f64| tokens.max(0) as f64 * rate / 1_000_000.0;
+    if let Some((input, cache_read, output)) = gemini_model_pricing(model) {
+        return Some(
+            per_million(usage.input_tokens + usage.cache_write_tokens, input)
+                + per_million(usage.cache_read_tokens, cache_read)
+                + per_million(usage.output_tokens, output),
+        );
+    }
+    let (input, cache_read, output) = claude_model_pricing(model)?;
+    Some(
+        per_million(usage.input_tokens, input)
+            + per_million(usage.cache_write_tokens, input * CLAUDE_CACHE_WRITE_5M_MULTIPLIER)
+            + per_million(usage.cache_read_tokens, cache_read)
+            + per_million(usage.output_tokens, output),
+    )
 }
 
 /// "claude-haiku-4-5-20251001" -> "claude-haiku-4-5": a trailing
@@ -610,7 +648,7 @@ pub struct Thread {
     pub parent_id: Option<String>,
     pub kind: String, // "main" | "spawn" | "guardian" | "other"
     pub depth: i64,
-    pub origin: String, // "codex" | "claude"
+    pub origin: String, // "codex" | "claude" | "antigravity"
 }
 
 impl Thread {
@@ -822,6 +860,7 @@ mod tests {
             ("gpt-6-astra", (10.00, 1.00, 50.00)),
             // found by the "+?" flag the day it shipped
             // cached input is half of gpt-6-sol's; the rest is the same
+            ("gpt-6.2-sol", (2.00, 0.10, 10.00)),
             ("gpt-6.1-sol", (2.00, 0.10, 10.00)),
             ("gpt-6.1-terra", (1.00, 0.05, 5.00)),
             ("gpt-6-sol", (2.00, 0.20, 10.00)),
@@ -872,6 +911,27 @@ mod tests {
         assert_eq!("", credit_spend_label(None));
         assert_eq!(" cr $57", credit_spend_label(Some(1_425.0 / CODEX_CREDITS_PER_USD)));
         assert_eq!(" cr $1,250", credit_spend_label(Some(1_250.0)));
+    }
+
+    #[test]
+    fn antigravity_calls_are_priced_by_gemini_or_claude_rates() {
+        use crate::antigravity::db::CallUsage;
+        let usage = CallUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_write_tokens: 0,
+            cache_read_tokens: 10_000_000,
+        };
+        // 3 input + 10M * 0.15 + 15 output
+        let cost = antigravity_api_equivalent_cost(Some("gemini-4-neon"), &usage).unwrap();
+        assert!((cost - (3.0 + 1.5 + 15.0)).abs() < 1e-9, "{}", cost);
+        let cost = antigravity_api_equivalent_cost(Some("gemini-4-hydrogen"), &usage).unwrap();
+        assert!((cost - (1.5 + 0.75 + 7.5)).abs() < 1e-9, "{}", cost);
+        // a Claude model run from Antigravity uses Anthropic's rates
+        let cost = antigravity_api_equivalent_cost(Some("claude-opus-5-5"), &usage).unwrap();
+        assert!((cost - (4.0 + 2.0 + 20.0)).abs() < 1e-9, "{}", cost);
+        assert!(antigravity_api_equivalent_cost(Some("gemini-4-carbon"), &usage).is_none());
+        assert!(antigravity_api_equivalent_cost(None, &usage).is_none());
     }
 
     #[test]

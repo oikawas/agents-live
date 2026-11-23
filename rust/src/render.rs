@@ -1,3 +1,5 @@
+use crate::antigravity::db::ConversationLog;
+use crate::antigravity::usage::AntigravityUsageSource;
 use crate::cli::Args;
 use crate::claude::sessions::{discover_claude_sessions, find_claude_jsonl};
 use crate::claude::transcript::ClaudeSessionState;
@@ -30,6 +32,12 @@ pub struct Dashboard {
     claude_usage_tracker: ThirtyDayUsageTracker,
     claude_trackers: HashMap<String, ClaudeSessionState>,
     claude_path_cache: HashMap<String, String>,
+    antigravity_home: PathBuf,
+    /// --antigravity on and the Antigravity CLI's data directory exists, so a
+    /// machine without it shows exactly what it did before.
+    antigravity_enabled: bool,
+    antigravity_usage_tracker: ThirtyDayUsageTracker,
+    antigravity_logs: HashMap<String, ConversationLog>,
     /// Codex lock-holder pids that are the app-server daemon rather than a
     /// session's own process (Codex 0.157+), memoized per pid.
     codex_daemon_pids: HashMap<i64, bool>,
@@ -38,6 +46,16 @@ pub struct Dashboard {
     palette: Palette,
     all_idle_style: &'static str,
     claude_palette: Palette,
+    antigravity_palette: Palette,
+}
+
+/// The source tag shown on summary lines and group titles.
+fn source_tag(origin: &str) -> &'static str {
+    match origin {
+        "claude" => "CLAUDE",
+        "antigravity" => "ANTIGRAVITY",
+        _ => "CODEX",
+    }
 }
 
 impl Dashboard {
@@ -51,6 +69,11 @@ impl Dashboard {
         }));
         let claude_usage_tracker = ThirtyDayUsageTracker::new(Arc::new(ClaudeUsageSource {
             claude_home: claude_home.clone(),
+        }));
+        let antigravity_home = args.antigravity_home_path();
+        let antigravity_enabled = args.antigravity == "on" && antigravity_home.is_dir();
+        let antigravity_usage_tracker = ThirtyDayUsageTracker::new(Arc::new(AntigravityUsageSource {
+            home: antigravity_home.clone(),
         }));
         let color = args.color == "always"
             || (args.color == "auto" && atty_stdout());
@@ -68,20 +91,38 @@ impl Dashboard {
             claude_usage_tracker,
             claude_trackers: HashMap::new(),
             claude_path_cache: HashMap::new(),
+            antigravity_home,
+            antigravity_enabled,
+            antigravity_usage_tracker,
+            antigravity_logs: HashMap::new(),
             codex_daemon_pids: HashMap::new(),
             error: None,
             color,
             palette,
             all_idle_style,
             claude_palette,
+            antigravity_palette: theme::antigravity_theme(),
         }
     }
 
     fn palette_for(&self, origin: &str) -> &Palette {
-        if origin == "claude" {
-            &self.claude_palette
+        match origin {
+            "claude" => &self.claude_palette,
+            "antigravity" => &self.antigravity_palette,
+            _ => &self.palette,
+        }
+    }
+
+    /// (origin, label, enabled) for every source, in --group-order.
+    /// Antigravity, the newest, always comes last.
+    fn sources(&self) -> [(&'static str, &'static str, bool); 3] {
+        let codex = ("codex", "Codex", self.args.codex == "on");
+        let claude = ("claude", "Claude", self.args.claude == "on");
+        let antigravity = ("antigravity", "Antigravity", self.antigravity_enabled);
+        if self.args.group_order == "claude-first" {
+            [claude, codex, antigravity]
         } else {
-            &self.palette
+            [codex, claude, antigravity]
         }
     }
 
@@ -178,6 +219,17 @@ impl Dashboard {
             }
             threads.extend(claude_threads);
             states.extend(claude_states);
+        }
+
+        if self.antigravity_enabled {
+            self.antigravity_usage_tracker.refresh(!self.args.once);
+            let (agy_threads, agy_states, agy_error) =
+                crate::antigravity::sessions::snapshot(&self.antigravity_home, &mut self.antigravity_logs);
+            if let Some(err) = agy_error {
+                errors.push(err);
+            }
+            threads.extend(agy_threads);
+            states.extend(agy_states);
         }
 
         self.error = if errors.is_empty() {
@@ -352,13 +404,12 @@ impl Dashboard {
     }
 
     fn sources_label(&self) -> String {
-        let mut labels = Vec::new();
-        if self.args.codex == "on" {
-            labels.push("Codex");
-        }
-        if self.args.claude == "on" {
-            labels.push("Claude");
-        }
+        // In the default order, so the wording does not follow --group-order.
+        let labels: Vec<&str> = [("Codex", self.args.codex == "on"), ("Claude", self.args.claude == "on"), ("Antigravity", self.antigravity_enabled)]
+            .iter()
+            .filter(|(_, on)| *on)
+            .map(|(label, _)| *label)
+            .collect();
         if labels.is_empty() {
             "Codex/Claude".to_string()
         } else {
@@ -366,28 +417,41 @@ impl Dashboard {
         }
     }
 
+    /// The one enabled source, if only one is.
+    fn sole_source(&self) -> Option<&'static str> {
+        let enabled: Vec<&str> = self.sources().iter().filter(|s| s.2).map(|s| s.0).collect();
+        match enabled.as_slice() {
+            [only] => Some(only),
+            _ => None,
+        }
+    }
+
     fn header_title(&self) -> &'static str {
-        if self.args.codex == "on" && self.args.claude == "on" {
-            "AGENTS LIVE"
-        } else if self.args.claude == "on" {
-            "CLAUDE AGENTS LIVE"
-        } else {
-            "CODEX AGENTS LIVE"
+        match self.sole_source() {
+            Some("claude") => "CLAUDE AGENTS LIVE",
+            Some("antigravity") => "ANTIGRAVITY AGENTS LIVE",
+            Some(_) => "CODEX AGENTS LIVE",
+            None if self.args.codex != "on" && self.args.claude != "on" => "CODEX AGENTS LIVE",
+            None => "AGENTS LIVE",
         }
     }
 
     fn all_idle_banner_title(&self) -> &'static str {
-        if self.args.codex == "on" && self.args.claude == "on" {
-            "ALL AGENTS IDLE"
-        } else if self.args.claude == "on" {
-            "ALL CLAUDE SESSIONS IDLE"
-        } else {
-            "ALL CODEX SESSIONS IDLE"
+        match self.sole_source() {
+            Some("claude") => "ALL CLAUDE SESSIONS IDLE",
+            Some("antigravity") => "ALL ANTIGRAVITY SESSIONS IDLE",
+            Some(_) => "ALL CODEX SESSIONS IDLE",
+            None if self.args.codex != "on" && self.args.claude != "on" => "ALL CODEX SESSIONS IDLE",
+            None => "ALL AGENTS IDLE",
         }
     }
 
     fn usage_for(&self, origin: &str) -> (Option<i64>, Option<f64>, Option<i64>, Option<f64>) {
-        let tracker = if origin == "claude" { &self.claude_usage_tracker } else { &self.usage_tracker };
+        let tracker = match origin {
+            "claude" => &self.claude_usage_tracker,
+            "antigravity" => &self.antigravity_usage_tracker,
+            _ => &self.usage_tracker,
+        };
         (tracker.priced_tokens(), tracker.cost_usd(), tracker.unpriced_tokens(), tracker.credit_spend_usd())
     }
 
@@ -499,7 +563,7 @@ impl Dashboard {
         visible: &[&Thread],
         states: &HashMap<String, AgentRowState>,
     ) -> String {
-        let source_tag = if origin == "claude" { "CLAUDE" } else { "CODEX" };
+        let source_tag = source_tag(origin);
         let weekly_used_percent = Self::latest_weekly_percent(visible, states, origin);
         let (priced_tokens, priced_cost, unpriced_tokens, credit_spend) = self.usage_for(origin);
         let tokens_label = billions_token_label(priced_tokens);
@@ -513,6 +577,11 @@ impl Dashboard {
         let counts = format!("{} running \u{b7} {} subagents \u{b7} {} processes", running, child_count, process_count);
         let weekly_text = weekly_label(weekly_used_percent);
         let five_hour_text = self.five_hour_summary_part(origin, visible, states);
+        if origin == "antigravity" {
+            // Antigravity records no usage limits locally: no Weekly / 5h.
+            let summary = format!("{}  {} {}   {}", source_tag, tokens_label, cost_label, counts);
+            return self.painted(&fit(&summary, width, false), "header", origin);
+        }
         let summary = format!(
             "{}  {}{}  {} {}   {}",
             source_tag, weekly_text, five_hour_text, tokens_label, cost_label, counts
@@ -624,15 +693,10 @@ impl Dashboard {
         } else {
             // Left to right in the same order as the source groups below
             // (--group-order), so each reset figure lines up with its list.
-            let origins: [(&str, &str); 2] = if self.args.group_order == "claude-first" {
-                [("claude", "Claude"), ("codex", "Codex")]
-            } else {
-                [("codex", "Codex"), ("claude", "Claude")]
-            };
             let mut parts = vec![format!("{}  {}", title, stamp)];
-            for (origin, label) in origins {
-                let enabled = if origin == "claude" { &self.args.claude } else { &self.args.codex };
-                if enabled != "on" {
+            // Antigravity has no weekly limit to count down to.
+            for (origin, label, enabled) in self.sources() {
+                if !enabled || origin == "antigravity" {
                     continue;
                 }
                 let resets_at = Self::latest_weekly_state(&visible, states, origin).and_then(|s| s.weekly_resets_at);
@@ -714,7 +778,7 @@ impl Dashboard {
             let project = roots.first().map(|t| t.project()).unwrap_or_else(|| group[0].project());
             let root_id: String = root.chars().take(8).collect();
             let group_running = group.iter().filter(|t| states[&t.id].phase == "run").count();
-            let source_tag = if *origin == "claude" { "CLAUDE" } else { "CODEX" };
+            let source_tag = source_tag(origin);
             let process_label = if *origin == "codex" && self.codex_daemon_pids.get(pid) == Some(&true) {
                 "app-server"
             } else {
@@ -943,13 +1007,7 @@ impl Dashboard {
 
     fn group_sort_key(&self, key: &GroupKey, group: &[&Thread]) -> (i64, String, i64, String, i64) {
         let (origin, pid, _root) = key;
-        let origin_rank: i64 = if self.args.group_order == "claude-first" {
-            if origin == "claude" { 0 } else { 1 }
-        } else if origin == "codex" {
-            0
-        } else {
-            1
-        };
+        let origin_rank = self.sources().iter().position(|s| s.0 == origin).unwrap_or(3) as i64;
         let earliest = group.iter().min_by_key(|t| (t.created_at_ms, t.id.clone())).unwrap();
         if self.args.group_sort == "created" {
             return (origin_rank, String::new(), earliest.created_at_ms, String::new(), 0);
@@ -1187,6 +1245,11 @@ mod tests {
     fn parse_args(extra: &[&str]) -> crate::cli::Args {
         use clap::Parser;
         let mut argv = vec!["agents-live", "--once"];
+        // Keep tests off this machine's real Antigravity data unless a test
+        // points at its own.
+        if !extra.contains(&"--antigravity-home") {
+            argv.extend_from_slice(&["--antigravity-home", "/nonexistent/antigravity-cli"]);
+        }
         argv.extend_from_slice(extra);
         crate::cli::Args::parse_from(argv)
     }
